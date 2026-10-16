@@ -66,7 +66,8 @@
     "agentApiSave": "保存",
     "agentApiSaving": "正在保存…",
     "agentApiPendingSave": "待保存",
-    "agentApiAutoSaved": "已自动保存"
+    "agentApiEnableAll": "全部启用",
+    "agentApiDisableAll": "全部禁用"
   },
   "base": {
     "toaster": {

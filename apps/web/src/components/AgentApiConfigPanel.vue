@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 
+import EntityAvatar from './avatar/EntityAvatar.vue'
 import { Button } from './ui/Button'
 import { Switch } from './ui/Switch'
 
@@ -40,10 +41,6 @@ const accounts = ref<AgentConfigAccount[]>([])
  */
 const selectedMap = ref<Record<string, boolean>>({})
 const dirty = ref(false)
-const lastSavedAt = ref<number | null>(null)
-
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-let saveChain: Promise<void> = Promise.resolve()
 
 function entryKey(accountId: string, chatId: string | number) {
   return `${accountId}:${String(chatId)}`
@@ -64,6 +61,11 @@ function applySelectionFromConfig(data: AgentConfigResponse) {
   selectedMap.value = next
 }
 
+/** Only accounts that have sync-whitelist chats — hide empty ones entirely. */
+const visibleAccounts = computed(() =>
+  accounts.value.filter(account => (account.chats?.length ?? 0) > 0),
+)
+
 const totalSelected = computed(() =>
   Object.values(selectedMap.value).filter(Boolean).length,
 )
@@ -82,20 +84,8 @@ function isSelected(accountId: string, chatId: string | number) {
   return selectedMap.value[entryKey(accountId, chatId)] === true
 }
 
-function clearSaveTimer() {
-  if (saveTimer != null) {
-    clearTimeout(saveTimer)
-    saveTimer = null
-  }
-}
-
-function scheduleSave() {
+function markDirty() {
   dirty.value = true
-  clearSaveTimer()
-  saveTimer = setTimeout(() => {
-    saveTimer = null
-    void saveConfig({ quiet: true })
-  }, 400)
 }
 
 async function loadConfig() {
@@ -121,7 +111,7 @@ async function loadConfig() {
 
 function onEnabledChange(checked: boolean) {
   enabled.value = !!checked
-  scheduleSave()
+  markDirty()
 }
 
 function onChatToggle(accountId: string, chatId: string | number, checked: boolean) {
@@ -130,13 +120,18 @@ function onChatToggle(accountId: string, chatId: string | number, checked: boole
     ...selectedMap.value,
     [key]: !!checked,
   }
-  scheduleSave()
+  markDirty()
 }
 
-async function saveConfig(options?: { quiet?: boolean }) {
-  clearSaveTimer()
-  const quiet = options?.quiet === true
+function setAccountChatsEnabled(account: AgentConfigAccount, enabledAll: boolean) {
+  const next = { ...selectedMap.value }
+  for (const chat of account.chats ?? [])
+    next[entryKey(account.accountId, chat.chatId)] = enabledAll
+  selectedMap.value = next
+  markDirty()
+}
 
+async function saveConfig() {
   const run = async () => {
     saving.value = true
     try {
@@ -168,9 +163,7 @@ async function saveConfig(options?: { quiet?: boolean }) {
       accounts.value = data.accounts ?? []
       applySelectionFromConfig(data)
       dirty.value = false
-      lastSavedAt.value = Date.now()
-      if (!quiet)
-        toast.success(t('aiChat.agentApiSaved'))
+      toast.success(t('aiChat.agentApiSaved'))
     }
     catch (error) {
       toast.error(t('aiChat.agentApiSaveFailed'))
@@ -181,16 +174,11 @@ async function saveConfig(options?: { quiet?: boolean }) {
     }
   }
 
-  saveChain = saveChain.then(run, run)
-  await saveChain
+  await run()
 }
 
 onMounted(() => {
   loadConfig()
-})
-
-onUnmounted(() => {
-  clearSaveTimer()
 })
 </script>
 
@@ -233,11 +221,8 @@ onUnmounted(() => {
       <p class="text-xs text-muted-foreground">
         {{ t('aiChat.agentApiSelectedCount', { count: totalSelected }) }}
         <span v-if="enabled && totalSelected === 0"> — {{ t('aiChat.agentApiEmptyHint') }}</span>
-        <span v-if="dirty || saving" class="ml-2">
+        <span v-if="dirty || saving" class="ml-2 text-amber-600 dark:text-amber-400">
           · {{ saving ? t('aiChat.agentApiSaving') : t('aiChat.agentApiPendingSave') }}
-        </span>
-        <span v-else-if="lastSavedAt" class="ml-2">
-          · {{ t('aiChat.agentApiAutoSaved') }}
         </span>
       </p>
 
@@ -249,35 +234,61 @@ onUnmounted(() => {
       </div>
 
       <section
-        v-for="account in accounts"
+        v-for="account in visibleAccounts"
         :key="account.accountId"
-        class="border rounded-xl bg-card/40"
+        class="overflow-hidden border rounded-xl bg-card/40"
       >
-        <header class="flex items-center justify-between border-b px-4 py-3">
-          <div class="min-w-0">
+        <header class="flex flex-wrap items-center gap-3 border-b bg-muted/20 px-4 py-3">
+          <EntityAvatar
+            v-if="account.platformUserId"
+            :id="account.platformUserId"
+            entity="other"
+            entity-type="user"
+            :name="account.displayName"
+            size="sm"
+            class="shrink-0 ring-1 ring-border/40"
+          />
+          <div
+            v-else
+            class="h-8 w-8 flex shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+          >
+            <span class="i-lucide-user h-4 w-4" />
+          </div>
+          <div class="min-w-0 flex-1">
             <div class="truncate text-sm font-medium">
               {{ account.displayName }}
             </div>
             <div class="truncate text-xs text-muted-foreground">
               {{ account.platformUserId || account.accountId }}
+              · {{ t('aiChat.agentApiAccountSelected', {
+                count: selectedCountForAccount(account.accountId),
+                total: account.chats.length,
+              }) }}
             </div>
           </div>
-          <div class="text-xs text-muted-foreground">
-            {{ t('aiChat.agentApiAccountSelected', {
-              count: selectedCountForAccount(account.accountId),
-              total: account.chats.length,
-            }) }}
+          <div class="flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7 px-2.5 text-xs"
+              :disabled="saving || selectedCountForAccount(account.accountId) === account.chats.length"
+              @click="setAccountChatsEnabled(account, true)"
+            >
+              {{ t('aiChat.agentApiEnableAll') }}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              class="h-7 px-2.5 text-xs"
+              :disabled="saving || selectedCountForAccount(account.accountId) === 0"
+              @click="setAccountChatsEnabled(account, false)"
+            >
+              {{ t('aiChat.agentApiDisableAll') }}
+            </Button>
           </div>
         </header>
 
-        <div
-          v-if="account.chats.length === 0"
-          class="px-4 py-8 text-center text-sm text-muted-foreground"
-        >
-          {{ t('aiChat.agentApiNoWhitelistChats') }}
-        </div>
-
-        <ul v-else class="divide-y">
+        <ul class="divide-y">
           <li
             v-for="chat in account.chats"
             :key="entryKey(account.accountId, chat.chatId)"
@@ -286,13 +297,17 @@ onUnmounted(() => {
               ? 'bg-primary/10'
               : 'hover:bg-muted/30'"
           >
+            <EntityAvatar
+              :id="chat.chatId"
+              entity="other"
+              entity-type="chat"
+              :name="chat.name"
+              size="sm"
+              class="shrink-0"
+            />
             <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 truncate text-sm font-medium">
-                <span
-                  v-if="isSelected(account.accountId, chat.chatId)"
-                  class="i-lucide-circle-check h-4 w-4 shrink-0 text-primary"
-                />
-                <span>{{ chat.name || chat.chatId }}</span>
+              <div class="truncate text-sm font-medium">
+                {{ chat.name || chat.chatId }}
               </div>
               <div class="truncate text-xs text-muted-foreground">
                 {{ chat.type }} · {{ chat.chatId }}
@@ -308,7 +323,7 @@ onUnmounted(() => {
         </ul>
       </section>
 
-      <div class="flex items-center justify-end gap-2 pb-4">
+      <div class="sticky bottom-0 flex items-center justify-end gap-2 border-t bg-background/95 py-3 backdrop-blur-sm">
         <Button
           variant="outline"
           :disabled="loading || saving"

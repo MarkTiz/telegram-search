@@ -66,7 +66,8 @@
     "agentApiSave": "저장",
     "agentApiSaving": "저장 중…",
     "agentApiPendingSave": "저장 대기",
-    "agentApiAutoSaved": "자동 저장됨"
+    "agentApiEnableAll": "모두 사용",
+    "agentApiDisableAll": "모두 해제"
   },
   "base": {
     "toaster": {
