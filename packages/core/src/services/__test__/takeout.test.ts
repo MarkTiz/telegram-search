@@ -400,6 +400,76 @@ describe('takeout service', () => {
     expect(task.updateError).not.toHaveBeenCalled()
   })
 
+  it('takeoutMessages should use messages.Search for channel/megagroup peers', async () => {
+    const calls: Api.AnyRequest[] = []
+    const entityService = {
+      getInputPeer: vi.fn(async () => new Api.InputPeerChannel({ channelId: bigInt(1162433032), accessHash: bigInt(99) })),
+    }
+    const client = {
+      getEntity: vi.fn(async () => new Api.Channel({
+        id: bigInt(1162433032),
+        title: '电丸',
+        photo: new Api.ChatPhotoEmpty(),
+        date: 0,
+        megagroup: true,
+      })),
+      invoke: vi.fn(async (query: Api.AnyRequest) => {
+        calls.push(query)
+        if (query instanceof Api.account.InitTakeoutSession)
+          return { id: bigInt(1) }
+        if (query instanceof Api.InvokeWithTakeout && query.query instanceof Api.messages.GetSplitRanges)
+          return [new Api.MessageRange({ minId: 1, maxId: 2147483647 })]
+        if (query instanceof Api.InvokeWithTakeout) {
+          if (query.query instanceof Api.account.FinishTakeoutSession)
+            return {}
+          const rangeWrapper = query.query
+          if (rangeWrapper instanceof Api.InvokeWithMessagesRange) {
+            const inner = rangeWrapper.query
+            if (inner instanceof Api.messages.Search) {
+              if (inner.offsetId === 0) {
+                return {
+                  count: 3,
+                  messages: [
+                    { id: 30, date: 10 },
+                    { id: 29, date: 9 },
+                    { id: 28, date: 8 },
+                  ],
+                }
+              }
+              return { count: 3, messages: [] }
+            }
+            if (inner instanceof Api.messages.GetHistory) {
+              throw new Error('channel takeout must not use GetHistory')
+            }
+          }
+        }
+        throw new Error(`unexpected query ${query.className}`)
+      }),
+    }
+    const { ctx } = createMockCtx(client)
+    const service = createTakeoutService(ctx, logger, mockChatModels, mockChatMessageStatsModels, entityService as any)
+    const task = createTask()
+    const yielded: number[] = []
+    for await (const message of service.takeoutMessages('1162433032', {
+      pagination: { limit: 100, offset: 0 },
+      skipMedia: true,
+      expectedCount: 3,
+      disableAutoProgress: true,
+      takeoutConsent: true,
+      task,
+    })) {
+      yielded.push(message.id)
+    }
+    expect(yielded).toEqual([30, 29, 28])
+    const searched = calls
+      .filter((query): query is Api.InvokeWithTakeout => query instanceof Api.InvokeWithTakeout)
+      .map(query => query.query)
+      .filter((query): query is Api.InvokeWithMessagesRange => query instanceof Api.InvokeWithMessagesRange)
+      .map(query => query.query)
+      .some(query => query instanceof Api.messages.Search)
+    expect(searched).toBe(true)
+  })
+
   it('takeoutMessages should reject missing consent before calling Telegram', async () => {
     const client = { invoke: vi.fn() }
     const { ctx } = createMockCtx(client)

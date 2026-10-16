@@ -215,12 +215,12 @@ export function createTakeoutService(
    * https://core.telegram.org/api/takeout
    */
   function buildInvokeQuery(
-    historyQuery: Api.messages.GetHistory,
+    innerQuery: Api.AnyRequest,
     takeoutSession: Api.account.Takeout,
     range: Api.MessageRange | undefined,
   ): Api.AnyRequest {
-    // Innermost: the raw GetHistory query
-    let query: Api.AnyRequest = historyQuery
+    // Innermost: GetHistory or Search
+    let query: Api.AnyRequest = innerQuery
 
     // Wrap with message range if provided (required for split-range iteration)
     if (range) {
@@ -228,6 +228,56 @@ export function createTakeoutService(
     }
 
     return new Api.InvokeWithTakeout({ takeoutId: takeoutSession.id, query })
+  }
+
+  /**
+   * Under takeout, messages.GetHistory for channels/megagroups can return a
+   * tiny truncated slice (e.g. count=2) while the plain GetHistory count is
+   * hundreds. messages.Search with an empty query still returns the full
+   * history inside the same takeout session, so channel peers use Search.
+   */
+  function shouldUseSearchForPeer(peer: Api.TypeInputPeer): boolean {
+    return peer instanceof Api.InputPeerChannel
+  }
+
+  function buildMessagePageQuery(
+    peer: Api.TypeInputPeer,
+    params: {
+      offsetId: number
+      limit: number
+      minId: number
+      maxId: number
+      useSearch: boolean
+    },
+  ): Api.messages.GetHistory | Api.messages.Search {
+    if (params.useSearch) {
+      return new Api.messages.Search({
+        peer,
+        q: '',
+        filter: new Api.InputMessagesFilterEmpty(),
+        minDate: 0,
+        maxDate: 0,
+        offsetId: params.offsetId,
+        addOffset: 0,
+        limit: params.limit,
+        maxId: params.maxId,
+        minId: params.minId,
+        hash: bigInt.zero,
+      })
+    }
+
+    return new Api.messages.GetHistory({
+      peer,
+      offsetId: params.offsetId,
+      addOffset: 0,
+      offsetDate: 0,
+      limit: params.limit,
+      maxId: params.maxId,
+      minId: params.minId,
+      // Takeout exports must force a complete response. A result hash is only
+      // valid when calculated from a previously fetched result set.
+      hash: bigInt.zero,
+    })
   }
 
   /**
@@ -247,9 +297,12 @@ export function createTakeoutService(
     const minId = normalizeId(options.minId, 0)
     const maxId = normalizeId(options.maxId, 0)
 
-    // Reset pagination for each split range
-    let offsetId = range ? 0 : normalizeId(options.pagination.offset, 0)
+    // Keep caller-provided offset (incremental "older than first" uses this).
+    // Callers reset pagination.offset to 0 when advancing to the next split range.
+    let offsetId = normalizeId(options.pagination.offset, 0)
     let hasMore = true
+    let useSearch: boolean | undefined
+    let searchFallbackArmed = true
 
     while (hasMore && !task.state.abortController.signal.aborted) {
       if (options.maxMessages !== undefined && processedCount.value >= options.maxMessages) {
@@ -258,20 +311,25 @@ export function createTakeoutService(
       // Resolve peer via entityService to get the correct InputPeer type and accessHash
       // from the DB, avoiding misidentification (e.g. channel treated as PeerUser).
       const peer = await entityService.getInputPeer(chatId)
-      const historyQuery = new Api.messages.GetHistory({
-        peer,
+      if (useSearch === undefined) {
+        useSearch = shouldUseSearchForPeer(peer)
+      }
+
+      const pageQuery = buildMessagePageQuery(peer, {
         offsetId,
-        addOffset: 0,
-        offsetDate: 0,
         limit,
-        maxId,
         minId,
-        // Takeout exports must force a complete response. A result hash is only
-        // valid when calculated from a previously fetched result set.
-        hash: bigInt.zero,
+        maxId,
+        useSearch,
       })
 
-      logger.withFields(historyQuery).verbose('Historical messages query')
+      logger.withFields({
+        method: useSearch ? 'messages.Search' : 'messages.GetHistory',
+        offsetId,
+        minId,
+        maxId,
+        limit,
+      }).verbose('Historical messages query')
 
       // Pace requests before invoking Telegram API; allow abort while waiting
       try {
@@ -282,13 +340,14 @@ export function createTakeoutService(
         break
       }
 
-      const query = buildInvokeQuery(historyQuery, takeoutSession, range)
+      const query = buildInvokeQuery(pageQuery, takeoutSession, range)
       const fetchStart = performance.now()
       const result = await withSpan('takeout:fetchPage', () => {
         return retryTelegramRead(() => ctx.getClient().invoke(query) as unknown as Promise<Api.messages.MessagesSlice>)
       }, {
         chatId,
         offsetId,
+        method: useSearch ? 'search' : 'getHistory',
         ...(range ? { rangeMinId: range.minId, rangeMaxId: range.maxId } : {}),
       })
 
@@ -302,6 +361,30 @@ export function createTakeoutService(
       }
 
       const messages = result.messages
+      const resultCount = typeof result.count === 'number' ? result.count : undefined
+
+      // Takeout GetHistory for some megagroups returns a truncated count (e.g. 2)
+      // while plain history / Search still has the full archive. Fall back once.
+      if (
+        searchFallbackArmed
+        && !useSearch
+        && offsetId === normalizeId(options.pagination.offset, 0)
+        && typeof resultCount === 'number'
+        && count > 0
+        && resultCount < Math.max(10, Math.floor(count * 0.1))
+      ) {
+        logger.withFields({
+          chatId,
+          getHistoryCount: resultCount,
+          expectedCount: count,
+        }).warn('Takeout GetHistory returned truncated history; falling back to messages.Search')
+        useSearch = true
+        searchFallbackArmed = false
+        offsetId = normalizeId(options.pagination.offset, 0)
+        hasMore = true
+        continue
+      }
+      searchFallbackArmed = false
 
       ctx.metrics?.takeoutPageMessages.observe({}, messages.length)
 
@@ -314,7 +397,11 @@ export function createTakeoutService(
       // If we got fewer messages than requested, there are no more
       hasMore = messages.length === limit
 
-      logger.withFields({ count: messages.length }).debug('Got messages batch')
+      logger.withFields({
+        count: messages.length,
+        resultCount,
+        method: useSearch ? 'search' : 'getHistory',
+      }).debug('Got messages batch')
 
       for (const message of messages) {
         if (task.state.abortController.signal.aborted) {
@@ -402,14 +489,27 @@ export function createTakeoutService(
 
       if (splitRanges.length > 0) {
         // Iterate each split range separately, resetting pagination per range
-        for (const range of splitRanges) {
+        for (let rangeIndex = 0; rangeIndex < splitRanges.length; rangeIndex++) {
+          const range = splitRanges[rangeIndex]
           if (task.state.abortController.signal.aborted) {
             break
           }
 
           logger.withFields({ rangeMinId: range.minId, rangeMaxId: range.maxId }).log('Fetching messages for split range')
 
-          yield* paginateRange(chatId, options, takeoutSession, range, count, processedCount)
+          // Preserve the caller's offset for the first range (incremental older-than
+          // sync). Later ranges restart from offset 0 per Telegram takeout docs.
+          const rangeOptions = rangeIndex === 0
+            ? options
+            : {
+                ...options,
+                pagination: {
+                  ...options.pagination,
+                  offset: 0,
+                },
+              }
+
+          yield* paginateRange(chatId, rangeOptions, takeoutSession, range, count, processedCount)
           if (options.maxMessages !== undefined && processedCount.value >= options.maxMessages)
             break
         }
