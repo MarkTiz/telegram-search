@@ -1,16 +1,14 @@
-import type { Log, Logger } from '@guiiai/logg'
+import type { Logger } from '@guiiai/logg'
 import type { Config, RuntimeFlags } from '@tg-search/common'
 
 import process from 'node:process'
 
 import figlet from 'figlet'
 
-import { initLogger, LoggerFormat, setGlobalHookPostLog, useLogger } from '@guiiai/logg'
+import { initLogger, useLogger } from '@guiiai/logg'
 import { createBotRegistry, setBotRegistryInstance } from '@tg-search/bot'
 import { parseEnvFlags, parseEnvToConfig } from '@tg-search/common'
 import { models } from '@tg-search/core'
-import { emitOtelLog } from '@tg-search/observability'
-import { registerOtel } from '@tg-search/observability/node'
 import { plugin as wsPlugin } from 'crossws/server'
 import { defineEventHandler, H3, serve } from 'h3'
 
@@ -27,7 +25,6 @@ import { createRemoteApi, remoteAccessFromEnv } from './remote'
 import { createRemoteApplication } from './remote-application'
 import { getDB, initDrizzle } from './storage/drizzle'
 import { getMediaStorage, initMediaStorage } from './storage/media'
-import { removeHyperLinks, toSnakeCaseFields } from './utils/fields'
 
 function setupErrorHandlers(logger: Logger): void {
   const handleError = (error: unknown, type: string) => {
@@ -100,28 +97,6 @@ async function bootstrap() {
   const logger = useLogger().useGlobalConfig()
 
   const config = parseEnvToConfig(process.env, logger)
-
-  if (process.env.OTEL_ENABLED === 'true') {
-    logger.log('OTEL is enabled')
-
-    const otelDebug = process.env.OTEL_DEBUG === 'true' || undefined
-    registerOtel({ version: pkg.version, debug: otelDebug })
-
-    setGlobalHookPostLog((log: Log, formattedOutput: string) => {
-      const fieldsSnake = toSnakeCaseFields(log.fields)
-
-      if (flags.logFormat === LoggerFormat.Pretty) {
-        const rawContext = removeHyperLinks(log.context)
-        const rawFields = formattedOutput?.split(log.message)[1]?.trim()
-        const message = `[${rawContext}] ${log.message} ${rawFields}`
-
-        emitOtelLog(log.level, rawContext, message, fieldsSnake)
-      }
-      else {
-        emitOtelLog(log.level, log.context, formattedOutput, fieldsSnake)
-      }
-    })
-  }
 
   await initDrizzle(logger, config, flags)
   configureAuthSessionStore(readSessionSecret(process.env))

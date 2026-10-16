@@ -13,41 +13,9 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/api-logs": "^0.211.0",
-    "@opentelemetry/auto-instrumentations-node": "^0.69.0",
-    "@opentelemetry/context-async-hooks": "^2.5.0",
-    "@opentelemetry/instrumentation-http": "^0.211.0",
-    "@opentelemetry/instrumentation-pg": "^0.63.0",
-    "@opentelemetry/sdk-node": "^0.211.0",
-    "@opentelemetry/sdk-trace-node": "^2.5.0",
     "@tg-search/observability": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "@opentelemetry/api": {
-      "optional": true
-    },
-    "@opentelemetry/api-logs": {
-      "optional": true
-    },
-    "@opentelemetry/auto-instrumentations-node": {
-      "optional": true
-    },
-    "@opentelemetry/context-async-hooks": {
-      "optional": true
-    },
-    "@opentelemetry/instrumentation-http": {
-      "optional": true
-    },
-    "@opentelemetry/instrumentation-pg": {
-      "optional": true
-    },
-    "@opentelemetry/sdk-node": {
-      "optional": true
-    },
-    "@opentelemetry/sdk-trace-node": {
-      "optional": true
-    },
     "@tg-search/observability": {
       "optional": true
     }
