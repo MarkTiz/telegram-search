@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 
 import { Button } from './ui/Button'
-import { Checkbox } from './ui/Checkbox'
 import { Switch } from './ui/Switch'
 
 interface AgentConfigChat {
@@ -25,6 +24,7 @@ interface AgentConfigAccount {
 
 interface AgentConfigResponse {
   enabled: boolean
+  entries?: Array<{ accountId: string, chatId: string }>
   accounts: AgentConfigAccount[]
 }
 
@@ -34,17 +34,53 @@ const loading = ref(true)
 const saving = ref(false)
 const enabled = ref(false)
 const accounts = ref<AgentConfigAccount[]>([])
-/** Local edits: accountId -> Set of chatIds */
-const selectedByAccount = ref<Record<string, Set<string>>>({})
+/**
+ * Flat reactive map keyed by `${accountId}:${chatId}` → true when enabled.
+ * Avoids nested Set reactivity / Checkbox controlled-state quirks.
+ */
+const selectedMap = ref<Record<string, boolean>>({})
 const dirty = ref(false)
 const lastSavedAt = ref<number | null>(null)
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let saveChain: Promise<void> = Promise.resolve()
 
+function entryKey(accountId: string, chatId: string | number) {
+  return `${accountId}:${String(chatId)}`
+}
+
+function applySelectionFromConfig(data: AgentConfigResponse) {
+  const next: Record<string, boolean> = {}
+  if (data.entries?.length) {
+    for (const entry of data.entries)
+      next[entryKey(entry.accountId, entry.chatId)] = true
+  }
+  else {
+    for (const account of data.accounts ?? []) {
+      for (const chatId of account.agentApiChatIds ?? [])
+        next[entryKey(account.accountId, chatId)] = true
+    }
+  }
+  selectedMap.value = next
+}
+
 const totalSelected = computed(() =>
-  Object.values(selectedByAccount.value).reduce((sum, set) => sum + set.size, 0),
+  Object.values(selectedMap.value).filter(Boolean).length,
 )
+
+function selectedCountForAccount(accountId: string) {
+  const prefix = `${accountId}:`
+  let count = 0
+  for (const [key, on] of Object.entries(selectedMap.value)) {
+    if (on && key.startsWith(prefix))
+      count++
+  }
+  return count
+}
+
+function isSelected(accountId: string, chatId: string | number) {
+  return selectedMap.value[entryKey(accountId, chatId)] === true
+}
 
 function clearSaveTimer() {
   if (saveTimer != null) {
@@ -71,11 +107,7 @@ async function loadConfig() {
     const data = await res.json() as AgentConfigResponse
     enabled.value = !!data.enabled
     accounts.value = data.accounts ?? []
-    const next: Record<string, Set<string>> = {}
-    for (const account of accounts.value) {
-      next[account.accountId] = new Set((account.agentApiChatIds ?? []).map(String))
-    }
-    selectedByAccount.value = next
+    applySelectionFromConfig(data)
     dirty.value = false
   }
   catch (error) {
@@ -87,24 +119,16 @@ async function loadConfig() {
   }
 }
 
-function isSelected(accountId: string, chatId: string) {
-  return selectedByAccount.value[accountId]?.has(String(chatId)) ?? false
-}
-
 function onEnabledChange(checked: boolean) {
   enabled.value = !!checked
   scheduleSave()
 }
 
-function toggleChat(accountId: string, chatId: string, checked: boolean) {
-  const set = new Set(selectedByAccount.value[accountId] ?? [])
-  if (checked)
-    set.add(String(chatId))
-  else
-    set.delete(String(chatId))
-  selectedByAccount.value = {
-    ...selectedByAccount.value,
-    [accountId]: set,
+function onChatToggle(accountId: string, chatId: string | number, checked: boolean) {
+  const key = entryKey(accountId, chatId)
+  selectedMap.value = {
+    ...selectedMap.value,
+    [key]: !!checked,
   }
   scheduleSave()
 }
@@ -113,16 +137,20 @@ async function saveConfig(options?: { quiet?: boolean }) {
   clearSaveTimer()
   const quiet = options?.quiet === true
 
-  // Serialize saves so rapid toggles cannot race and overwrite each other.
   const run = async () => {
     saving.value = true
     try {
       const body = {
         enabled: enabled.value,
-        accounts: accounts.value.map(account => ({
-          accountId: account.accountId,
-          chatIds: [...(selectedByAccount.value[account.accountId] ?? [])].map(String),
-        })),
+        accounts: accounts.value.map((account) => {
+          const chatIds = (account.chats ?? [])
+            .map(chat => String(chat.chatId))
+            .filter(chatId => selectedMap.value[entryKey(account.accountId, chatId)] === true)
+          return {
+            accountId: account.accountId,
+            chatIds,
+          }
+        }),
       }
       const res = await fetch('/api/agent/config', {
         method: 'PUT',
@@ -132,18 +160,13 @@ async function saveConfig(options?: { quiet?: boolean }) {
       if (!res.ok)
         throw new Error(`HTTP ${res.status}`)
 
-      // Re-load from server so UI matches persisted prune/normalize result.
       const verify = await fetch('/api/agent/config', { cache: 'no-store' })
       if (!verify.ok)
         throw new Error(`HTTP ${verify.status}`)
       const data = await verify.json() as AgentConfigResponse
       enabled.value = !!data.enabled
       accounts.value = data.accounts ?? []
-      const next: Record<string, Set<string>> = {}
-      for (const account of accounts.value) {
-        next[account.accountId] = new Set((account.agentApiChatIds ?? []).map(String))
-      }
-      selectedByAccount.value = next
+      applySelectionFromConfig(data)
       dirty.value = false
       lastSavedAt.value = Date.now()
       if (!quiet)
@@ -241,7 +264,7 @@ onUnmounted(() => {
           </div>
           <div class="text-xs text-muted-foreground">
             {{ t('aiChat.agentApiAccountSelected', {
-              count: selectedByAccount[account.accountId]?.size ?? 0,
+              count: selectedCountForAccount(account.accountId),
               total: account.chats.length,
             }) }}
           </div>
@@ -257,24 +280,30 @@ onUnmounted(() => {
         <ul v-else class="divide-y">
           <li
             v-for="chat in account.chats"
-            :key="`${account.accountId}:${chat.chatId}`"
-            class="flex cursor-pointer items-center gap-3 px-4 py-2.5 hover:bg-muted/30"
-            @click="toggleChat(account.accountId, chat.chatId, !isSelected(account.accountId, chat.chatId))"
+            :key="entryKey(account.accountId, chat.chatId)"
+            class="flex items-center gap-3 px-4 py-2.5 transition-colors"
+            :class="isSelected(account.accountId, chat.chatId)
+              ? 'bg-primary/10'
+              : 'hover:bg-muted/30'"
           >
-            <Checkbox
-              :checked="isSelected(account.accountId, chat.chatId)"
-              :disabled="saving"
-              @click.stop
-              @update:checked="(v) => toggleChat(account.accountId, chat.chatId, v === true)"
-            />
             <div class="min-w-0 flex-1">
-              <div class="truncate text-sm font-medium">
-                {{ chat.name || chat.chatId }}
+              <div class="flex items-center gap-2 truncate text-sm font-medium">
+                <span
+                  v-if="isSelected(account.accountId, chat.chatId)"
+                  class="i-lucide-circle-check h-4 w-4 shrink-0 text-primary"
+                />
+                <span>{{ chat.name || chat.chatId }}</span>
               </div>
               <div class="truncate text-xs text-muted-foreground">
                 {{ chat.type }} · {{ chat.chatId }}
               </div>
             </div>
+            <Switch
+              :key="`${entryKey(account.accountId, chat.chatId)}:${isSelected(account.accountId, chat.chatId)}`"
+              :checked="isSelected(account.accountId, chat.chatId)"
+              :disabled="saving"
+              @update:checked="(v) => onChatToggle(account.accountId, chat.chatId, v)"
+            />
           </li>
         </ul>
       </section>
