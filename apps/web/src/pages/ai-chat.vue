@@ -369,7 +369,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col">
+  <div class="h-full min-h-0 flex flex-col overflow-hidden">
     <!-- Header -->
     <header class="h-14 flex shrink-0 items-center justify-between border-b bg-card/50 px-4 py-0 backdrop-blur-sm md:h-16 md:px-6">
       <div class="flex items-center gap-3">
@@ -416,7 +416,7 @@ onMounted(() => {
 
     <!-- LLM / Agent API config tab -->
     <div v-if="activeTab === 'llmConfig'" class="min-h-0 flex-1 overflow-hidden">
-      <AgentApiConfigPanel />
+      <AgentApiConfigPanel class="h-full" />
     </div>
 
     <!-- Chat Messages Area -->

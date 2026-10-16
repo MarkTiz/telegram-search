@@ -183,8 +183,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="mx-auto h-full max-w-3xl flex flex-col gap-4 overflow-y-auto p-4 md:p-6">
-    <div class="space-y-1">
+  <div class="mx-auto h-full min-h-0 max-w-3xl flex flex-col overflow-hidden p-4 md:p-6">
+    <div class="shrink-0 space-y-1 pb-4">
       <h2 class="text-base font-semibold">
         {{ t('aiChat.agentApiTitle') }}
       </h2>
@@ -195,14 +195,14 @@ onMounted(() => {
 
     <div
       v-if="loading"
-      class="flex flex-1 items-center justify-center text-sm text-muted-foreground"
+      class="min-h-0 flex flex-1 items-center justify-center text-sm text-muted-foreground"
     >
       <span class="i-lucide-loader-circle mr-2 h-4 w-4 animate-spin" />
       {{ t('aiChat.agentApiLoading') }}
     </div>
 
     <template v-else>
-      <div class="flex items-center justify-between border rounded-xl bg-card/50 px-4 py-3">
+      <div class="mb-3 flex shrink-0 items-center justify-between border rounded-xl bg-card/50 px-4 py-3">
         <div class="space-y-0.5">
           <div class="text-sm font-medium">
             {{ t('aiChat.agentApiEnable') }}
@@ -218,7 +218,7 @@ onMounted(() => {
         />
       </div>
 
-      <p class="text-xs text-muted-foreground">
+      <p class="mb-3 shrink-0 text-xs text-muted-foreground">
         {{ t('aiChat.agentApiSelectedCount', { count: totalSelected }) }}
         <span v-if="enabled && totalSelected === 0"> — {{ t('aiChat.agentApiEmptyHint') }}</span>
         <span v-if="dirty || saving" class="ml-2 text-amber-600 dark:text-amber-400">
@@ -226,6 +226,7 @@ onMounted(() => {
         </span>
       </p>
 
+      <div class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-0.5">
       <div
         v-if="accounts.length === 0"
         class="border rounded-xl py-12 text-center text-sm text-muted-foreground"
@@ -322,8 +323,9 @@ onMounted(() => {
           </li>
         </ul>
       </section>
+      </div>
 
-      <div class="sticky bottom-0 flex items-center justify-end gap-2 border-t bg-background/95 py-3 backdrop-blur-sm">
+      <div class="mt-3 flex shrink-0 items-center justify-end gap-2 border-t bg-background pt-3">
         <Button
           variant="outline"
           :disabled="loading || saving"

@@ -168,10 +168,10 @@ watch(isAIChatDrawerOpen, (open) => {
 
   <Dialog v-model:open="isAIChatDrawerOpen">
     <DialogContent
-      class="left-auto right-0 top-0 h-screen max-w-[min(760px,100vw)] w-full translate-x-0 translate-y-0 border-0 border-l rounded-none p-0"
+      class="left-auto right-0 top-0 h-screen max-h-screen max-w-[min(760px,100vw)] w-full flex flex-col overflow-hidden translate-x-0 translate-y-0 border-0 border-l rounded-none p-0"
       :show-close-button="true"
     >
-      <AIChatPage :chat-ids="aiChatDrawerChatIds" />
+      <AIChatPage class="min-h-0 flex-1" :chat-ids="aiChatDrawerChatIds" />
     </DialogContent>
   </Dialog>
 </template>
