@@ -349,7 +349,17 @@
     "currentChatLabel": "Current Chat Progress",
     "unsyncedMessages": "Unsynced Messages",
     "remainingRatio": "Remaining",
-    "selectChatToViewStats": "Select a chat to view sync statistics"
+    "selectChatToViewStats": "Select a chat to view sync statistics",
+    "syncTab": "Sync",
+    "whitelistTab": "Whitelist",
+    "whitelistDescription": "Only enabled chats receive live messages and appear for sync. When none are enabled, there is no restriction (same as before).",
+    "whitelistEmptyHint": "Unrestricted — all chats can sync",
+    "whitelistEnabledCount": "{count} chats enabled",
+    "whitelistSearchPlaceholder": "Search by name or ID",
+    "whitelistNoChats": "No chats to show",
+    "whitelistNoEnabledChats": "Whitelist is active but empty. Enable chats in the Whitelist tab first.",
+    "whitelistSaved": "Whitelist saved",
+    "whitelistSaveFailed": "Failed to save whitelist"
   },
   "summaryDialog": {
     "title": "Message Summary",

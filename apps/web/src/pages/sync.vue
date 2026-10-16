@@ -31,6 +31,7 @@ import ChatSelector from '../components/ChatSelector.vue'
 import MobileSyncStatsDrawer from '../components/MobileSyncStatsDrawer.vue'
 import SyncSelectedSummaryPanel from '../components/SyncSelectedSummaryPanel.vue'
 import SyncVisualization from '../components/SyncVisualization.vue'
+import SyncWhitelistPanel from '../components/SyncWhitelistPanel.vue'
 
 import { Button } from '../components/ui/Button'
 import {
@@ -53,6 +54,7 @@ import {
   toDateRange,
   toTimestampMs,
 } from '../utils/date-range'
+import { createAccountSettingsSavePayload } from '../utils/account-settings'
 
 const { t } = useI18n()
 
@@ -94,6 +96,68 @@ const bridge = useBridge()
 
 const chatsStore = useChatStore()
 const { chats, folders } = storeToRefs(chatsStore)
+
+type SyncPageTab = 'sync' | 'whitelist'
+const syncPageTab = ref<SyncPageTab>('sync')
+const isWhitelistSaving = ref(false)
+
+const whitelistChatIds = computed(() => {
+  return accountSettings.value.messageProcessing?.whitelistChatIds ?? []
+})
+
+/** Empty whitelist = unrestricted (show all). Non-empty = only listed chats. */
+const syncableChats = computed(() => {
+  const ids = whitelistChatIds.value
+  if (ids.length === 0)
+    return chats.value
+  const allowed = new Set(ids.map(String))
+  return chats.value.filter(chat => allowed.has(String(chat.id)))
+})
+
+async function persistWhitelist(nextIds: string[]) {
+  if (!accountSettings.value.messageProcessing) {
+    accountSettings.value.messageProcessing = {
+      receiveMessages: { receiveAll: true, downloadMedia: true },
+      resolvers: { disabledResolvers: ['avatar'] },
+      defaults: { syncMedia: true, maxMediaSize: 0 },
+      enablePhotoEmbedding: false,
+      whitelistChatIds: [],
+    }
+  }
+  accountSettings.value.messageProcessing.whitelistChatIds = [...nextIds]
+
+  if (nextIds.length > 0) {
+    const allowed = new Set(nextIds.map(String))
+    selectedChats.value = selectedChats.value.filter(id => allowed.has(String(id)))
+    if (activeChatId.value != null && !allowed.has(String(activeChatId.value)))
+      activeChatId.value = null
+  }
+
+  isWhitelistSaving.value = true
+  try {
+    const payload = createAccountSettingsSavePayload(accountSettings.value)
+    bridge.sendEvent(CoreEventType.ConfigUpdate, { accountSettings: payload })
+    // ConfigData handler updates store; give a short grace period then toast.
+    await new Promise(resolve => setTimeout(resolve, 400))
+    toast.success(t('sync.whitelistSaved'))
+  }
+  catch (error) {
+    console.error(error)
+    toast.error(t('sync.whitelistSaveFailed'))
+  }
+  finally {
+    isWhitelistSaving.value = false
+  }
+}
+
+async function handleWhitelistToggle(chatId: string, enabled: boolean) {
+  const current = new Set((accountSettings.value.messageProcessing?.whitelistChatIds ?? []).map(String))
+  if (enabled)
+    current.add(String(chatId))
+  else
+    current.delete(String(chatId))
+  await persistWhitelist([...current])
+}
 
 const syncTaskStore = useSyncTaskStore()
 const {
@@ -639,9 +703,30 @@ function startSync() {
         <h1 class="text-lg font-semibold">
           {{ t('sync.sync') }}
         </h1>
+        <div class="flex items-center gap-1 rounded-full bg-muted/60 p-1">
+          <button
+            type="button"
+            class="rounded-full px-3 py-1 text-xs font-medium transition-colors"
+            :class="syncPageTab === 'sync' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+            @click="syncPageTab = 'sync'"
+          >
+            {{ t('sync.syncTab') }}
+          </button>
+          <button
+            type="button"
+            class="rounded-full px-3 py-1 text-xs font-medium transition-colors"
+            :class="syncPageTab === 'whitelist' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+            @click="syncPageTab = 'whitelist'"
+          >
+            {{ t('sync.whitelistTab') }}
+          </button>
+        </div>
       </div>
 
-      <div class="no-scrollbar min-w-0 flex items-center justify-end gap-2 overflow-x-auto md:w-auto md:justify-start md:overflow-visible">
+      <div
+        v-if="syncPageTab === 'sync'"
+        class="no-scrollbar min-w-0 flex items-center justify-end gap-2 overflow-x-auto md:w-auto md:justify-start md:overflow-visible"
+      >
         <Button
           icon="i-lucide-refresh-cw"
           variant="outline"
@@ -675,15 +760,32 @@ function startSync() {
     </header>
 
     <div class="flex flex-1 flex-col overflow-hidden">
-      <!-- Main Content: Chat Selector -->
-      <div class="min-w-0 flex flex-1 flex-col">
+      <!-- Whitelist management -->
+      <div v-if="syncPageTab === 'whitelist'" class="min-h-0 flex-1 p-3 md:p-4">
+        <SyncWhitelistPanel
+          :chats="chats"
+          :whitelist-chat-ids="whitelistChatIds"
+          :saving="isWhitelistSaving"
+          class="h-full"
+          @toggle="handleWhitelistToggle"
+        />
+      </div>
+
+      <!-- Main Content: Chat Selector (whitelist-filtered when configured) -->
+      <div v-else class="min-w-0 flex flex-1 flex-col">
         <!-- Chat List Area -->
         <div class="min-h-0 flex-1 p-3 md:p-4">
+          <div
+            v-if="whitelistChatIds.length > 0 && syncableChats.length === 0"
+            class="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+          >
+            {{ t('sync.whitelistNoEnabledChats') }}
+          </div>
           <ChatSelector
             v-model:selected-chats="selectedChats"
             v-model:visible-chat-ids="visibleChatIds"
             v-model:active-chat-id="activeChatId"
-            :chats="chats"
+            :chats="syncableChats"
             :folders="folders"
             class="h-full"
           >
@@ -742,6 +844,7 @@ function startSync() {
 
       <!-- Bottom Panel: Status & Info -->
       <div
+        v-if="syncPageTab === 'sync'"
         class="shrink-0 overflow-hidden border-t bg-background/95 backdrop-blur-sm transition-all duration-300 ease-in-out hidden md:block"
         :class="[
           isBottomPanelOpen ? 'max-h-[58vh] opacity-100 md:max-h-[24rem]' : 'max-h-0 opacity-0',
@@ -793,7 +896,7 @@ function startSync() {
       </div>
 
       <MobileSyncStatsDrawer
-        v-if="hasMobileStatusContent"
+        v-if="syncPageTab === 'sync' && hasMobileStatusContent"
         v-model:open="isMobileStatusOpen"
         v-model:selected-tab="mobileStatusTab"
         :has-selected-status-panel="hasSelectedStatusPanel"

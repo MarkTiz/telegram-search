@@ -54,6 +54,12 @@ export const messageProcessingSchema = object({
   resolvers: optional(resolversConfigSchema, {}),
   defaults: optional(syncOptionsSchema, { syncMedia: true, maxMediaSize: 0 }),
   enablePhotoEmbedding: optional(boolean(), false),
+  /**
+   * Chat IDs allowed for live receive + Takeout sync.
+   * Empty array = no restriction (backward compatible).
+   * Once any chat is enabled, only listed chats are persisted / shown for sync.
+   */
+  whitelistChatIds: optional(array(string()), []),
 })
 
 export const botConfigSchema = object({

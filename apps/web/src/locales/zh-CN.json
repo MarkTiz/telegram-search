@@ -349,7 +349,17 @@
     "currentChatLabel": "当前聊天同步进度",
     "unsyncedMessages": "未同步消息",
     "remainingRatio": "剩余",
-    "selectChatToViewStats": "选择聊天以查看同步统计信息"
+    "selectChatToViewStats": "选择聊天以查看同步统计信息",
+    "syncTab": "同步",
+    "whitelistTab": "白名单",
+    "whitelistDescription": "开启的会话才会接收实时消息并可用于同步。未开启任何会话时，不限制（与之前行为一致）。",
+    "whitelistEmptyHint": "当前不限制，全部会话可同步",
+    "whitelistEnabledCount": "已启用 {count} 个会话",
+    "whitelistSearchPlaceholder": "搜索会话名称或 ID",
+    "whitelistNoChats": "没有可显示的会话",
+    "whitelistNoEnabledChats": "白名单已启用，但尚未勾选任何会话。请先到「白名单」中开启。",
+    "whitelistSaved": "白名单已保存",
+    "whitelistSaveFailed": "白名单保存失败"
   },
   "summaryDialog": {
     "title": "消息摘要",

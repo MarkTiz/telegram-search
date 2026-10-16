@@ -9,6 +9,7 @@ import type { GramEventsService } from '../services/gram-events'
 import { Api } from 'telegram'
 
 import { CoreEventType } from '../types/events'
+import { isChatAllowedBySyncWhitelist } from '../utils/account-settings'
 
 export function registerGramEventsEventHandlers(
   ctx: CoreContext,
@@ -40,6 +41,12 @@ export function registerGramEventsEventHandlers(
     const receiveSettings = accountSettings.messageProcessing?.receiveMessages
 
     if (!receiveSettings?.receiveAll) {
+      return
+    }
+
+    const chatId = getChatIdFromMessage(message)
+    if (!isChatAllowedBySyncWhitelist(accountSettings, chatId)) {
+      logger.withFields({ chatId, messageId: message.id }).verbose('Skipping realtime message outside sync whitelist')
       return
     }
 

@@ -59,6 +59,7 @@ export function normalizeAccountSettings(settings: AccountSettings): AccountSett
       ...(messageProcessing.defaults?.skipJieba != null ? { skipJieba: messageProcessing.defaults.skipJieba } : {}),
     },
     enablePhotoEmbedding: messageProcessing.enablePhotoEmbedding ?? false,
+    whitelistChatIds: messageProcessing.whitelistChatIds ?? [],
   }
 
   normalized.receiveMessages = normalized.messageProcessing.receiveMessages
@@ -66,3 +67,21 @@ export function normalizeAccountSettings(settings: AccountSettings): AccountSett
 
   return normalized
 }
+
+/**
+ * Empty whitelist means unrestricted (current behavior for existing accounts).
+ * A non-empty list restricts live receive + Takeout sync to those chat IDs.
+ */
+export function getSyncWhitelistChatIds(settings: AccountSettings): string[] {
+  return settings.messageProcessing?.whitelistChatIds ?? []
+}
+
+export function isChatAllowedBySyncWhitelist(settings: AccountSettings, chatId: string | number | undefined | null): boolean {
+  if (chatId == null || chatId === '')
+    return false
+  const whitelist = getSyncWhitelistChatIds(settings)
+  if (whitelist.length === 0)
+    return true
+  return whitelist.includes(String(chatId))
+}
+

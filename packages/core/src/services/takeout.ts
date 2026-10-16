@@ -696,6 +696,18 @@ export function createTakeoutService(
     const { increase, syncOptions } = params
     const pagination = usePagination()
 
+    // Restrict Takeout to account sync whitelist when configured (empty = unrestricted).
+    const accountSettings = await ctx.getAccountSettings()
+    const whitelist = accountSettings.messageProcessing?.whitelistChatIds ?? []
+    if (whitelist.length > 0) {
+      const allowed = new Set(whitelist.map(String))
+      chatIds = chatIds.filter(id => allowed.has(String(id)))
+      if (chatIds.length === 0) {
+        logger.warn('Takeout skipped: no selected chats are on the sync whitelist')
+        return
+      }
+    }
+
     // Ask the user once per sync run for explicit takeout authorization.
     // Declining stops the run; bulk sync never falls back to GetHistory.
     ctx.emitter.emit(CoreEventType.TakeoutConfirmNeeded)

@@ -12,6 +12,7 @@ import { accountModels } from '../models/accounts'
 import { chatMessageModels } from '../models/chat-message'
 import { chatModels } from '../models/chats'
 import { CoreEventType } from '../types/events'
+import { isChatAllowedBySyncWhitelist } from '../utils/account-settings'
 
 const MESSAGE_PROCESS_TIMEOUT_MS = 60_000
 const CHANNEL_DIFFERENCE_LIMIT = 100
@@ -43,6 +44,14 @@ export function createSyncService(ctx: CoreContext, logger: Logger) {
   }
 
   async function persistMessages(messages: Api.Message[]): Promise<void> {
+    if (messages.length === 0)
+      return
+
+    const accountSettings = await ctx.getAccountSettings()
+    messages = messages.filter((message) => {
+      const chatId = chatIdFromMessage(message)
+      return isChatAllowedBySyncWhitelist(accountSettings, chatId)
+    })
     if (messages.length === 0)
       return
 

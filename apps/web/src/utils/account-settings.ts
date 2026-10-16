@@ -10,6 +10,7 @@ export function buildDefaultMessageProcessing() {
     resolvers: { disabledResolvers: ['avatar'] },
     defaults: { syncMedia: true, maxMediaSize: 0 },
     enablePhotoEmbedding: false,
+    whitelistChatIds: [],
   }
 }
 
