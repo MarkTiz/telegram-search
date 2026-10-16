@@ -393,7 +393,7 @@ export interface StorageMessageContextParams {
 export interface SyncOptions {
   // Whether to sync media files
   syncMedia?: boolean
-  // Maximum size for media files in MB (0 = unlimited)
+  // Maximum size for media files in MB (0 = unlimited). Stored/displayed as MB; downloads multiply by 1024*1024.
   maxMediaSize?: number
   // Time range for sync (unix timestamp in milliseconds)
   startTime?: number
