@@ -48,15 +48,25 @@ export function useLoginFlow() {
     }
   })
 
-  watch(isReady, (value) => {
-    if (value) {
-      accountStore.auth.isLoading = false
-      state.value.currentStep = 'complete'
+  function redirectRoot() {
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : undefined
+    router.replace(redirect || '/sync')
+  }
 
-      if (activeSession.value?.me?.id) {
-        avatarStore.ensureUserAvatar(activeSession.value.me.id, undefined, true)
-      }
+  // NOTICE: Returning users hit /login while websocket AccountReady is still false.
+  // When the server session reconnects (or an interactive login finishes), leave
+  // immediately — do not park on the "Login successful!" interstitial.
+  watch(isReady, (value) => {
+    if (!value)
+      return
+
+    accountStore.auth.isLoading = false
+
+    if (activeSession.value?.me?.id) {
+      avatarStore.ensureUserAvatar(activeSession.value.me.id, undefined, true)
     }
+
+    redirectRoot()
   }, { immediate: true })
 
   const steps = computed(() => [
@@ -65,11 +75,6 @@ export function useLoginFlow() {
     { step: 3, value: 'password', title: t('login.password'), description: t('login.passwordDescription') },
     { step: 4, value: 'complete', title: t('login.complete'), description: t('login.completeDescription') },
   ])
-
-  function redirectRoot() {
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : undefined
-    router.push(redirect || '/sync')
-  }
 
   async function handleLogin() {
     accountStore.auth.isLoading = true

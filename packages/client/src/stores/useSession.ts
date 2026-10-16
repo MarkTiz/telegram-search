@@ -223,6 +223,17 @@ export const useSessionStore = defineStore('session', () => {
     return true
   }
 
+  // Server catalog rows with telegramUserId become me.id; local mode keeps StringSession.
+  // Used by the router so returning users skip /login before websocket AccountReady.
+  const hasActivePersistedAuth = computed(() => {
+    const active = activeSession.value
+    if (!active)
+      return false
+    if (serverAuthority.value)
+      return !!active.me?.id
+    return !!active.session
+  })
+
   const markTransportReady = () => {
     transportReady.value = true
   }
@@ -264,6 +275,7 @@ export const useSessionStore = defineStore('session', () => {
     cleanup,
     serverAuthority,
     transportReady,
+    hasActivePersistedAuth,
     prepareServerSessions,
     markTransportReady,
     enableServerAuthority,
