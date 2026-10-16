@@ -28,6 +28,7 @@ import {
 import { Textarea } from '../components/ui/Textarea'
 import { useAIChatToolExecutors } from '../composables/use-ai-chat-tool-executors'
 import { useAIChatLogic } from '../composables/useAIChat'
+import { filterChatsByWhitelist } from '../utils/sync-whitelist'
 
 const props = withDefaults(defineProps<{
   chatIds?: number[]
@@ -50,11 +51,26 @@ const messagesContainer = ref<HTMLElement>()
 const chatStore = useChatStore()
 const { chats } = storeToRefs(chatStore)
 
+/** AI scope picker: only whitelist-enabled chats (empty whitelist => empty). */
+const whitelistedChats = computed(() => filterChatsByWhitelist(chats.value || [], accountSettings.value))
+
 const isScopeSelectorOpen = ref(false)
 const selectedChatIds = ref<number[]>([])
 const tempSelectedChatIds = ref<number[]>([])
 const activeChatId = ref<number | null>(null)
 const toolExecutors = useAIChatToolExecutors({ selectedChatIds })
+
+function pruneSelectionToWhitelist(ids: number[]) {
+  const allowed = new Set(whitelistedChats.value.map(chat => chat.id))
+  return ids.filter(id => allowed.has(id))
+}
+
+watch(whitelistedChats, () => {
+  selectedChatIds.value = pruneSelectionToWhitelist(selectedChatIds.value)
+  tempSelectedChatIds.value = pruneSelectionToWhitelist(tempSelectedChatIds.value)
+  if (activeChatId.value != null && !whitelistedChats.value.some(chat => chat.id === activeChatId.value))
+    activeChatId.value = null
+})
 
 watch(isScopeSelectorOpen, (open) => {
   if (open) {
@@ -71,7 +87,7 @@ watch(selectedChatIds, (ids) => {
 }, { deep: true })
 
 function confirmFilter() {
-  selectedChatIds.value = [...tempSelectedChatIds.value]
+  selectedChatIds.value = pruneSelectionToWhitelist(tempSelectedChatIds.value)
   isScopeSelectorOpen.value = false
 }
 
@@ -319,7 +335,7 @@ function parseChatIdsFromQuery(queryValue: string | (string | null)[] | null | u
 
 function applyRouteScope() {
   if (props.chatIds.length > 0) {
-    selectedChatIds.value = Array.from(new Set(props.chatIds))
+    selectedChatIds.value = pruneSelectionToWhitelist(Array.from(new Set(props.chatIds)))
     tempSelectedChatIds.value = [...selectedChatIds.value]
     return
   }
@@ -669,7 +685,7 @@ onMounted(() => {
         <ChatSelector
           v-model:selected-chats="tempSelectedChatIds"
           v-model:active-chat-id="activeChatId"
-          :chats="chats"
+          :chats="whitelistedChats"
           class="h-full"
         >
           <template #actions>

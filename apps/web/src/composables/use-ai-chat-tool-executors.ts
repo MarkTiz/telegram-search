@@ -10,8 +10,11 @@ import type {
 } from './useAIChat'
 
 import { useLogger } from '@guiiai/logg'
-import { useBridge, waitForEventWithTimeout } from '@tg-search/client'
+import { useAccountStore, useBridge, waitForEventWithTimeout } from '@tg-search/client'
+import { storeToRefs } from 'pinia'
 import { CoreEventType } from '@tg-search/core'
+
+import { filterDialogsByWhitelist, resolveWhitelistedSearchChatIds } from '../utils/sync-whitelist'
 
 function createRequestId() {
   return `ai-chat:${Date.now()}:${Math.random().toString(36).slice(2)}`
@@ -24,9 +27,17 @@ interface UseAIChatToolExecutorsOptions {
 export function useAIChatToolExecutors({ selectedChatIds }: UseAIChatToolExecutorsOptions) {
   const bridge = useBridge()
   const logger = useLogger('composables:ai-chat')
+  const { accountSettings } = storeToRefs(useAccountStore())
+
+  function scopedChatIds() {
+    return resolveWhitelistedSearchChatIds(selectedChatIds.value, accountSettings.value)
+  }
 
   async function searchMessages(params: SearchMessagesParams) {
     const requestId = createRequestId()
+    const chatIds = scopedChatIds()
+    if (chatIds.length === 0)
+      return []
 
     bridge.sendEvent(CoreEventType.StorageSearchMessages, {
       requestId,
@@ -43,9 +54,7 @@ export function useAIChatToolExecutors({ selectedChatIds }: UseAIChatToolExecuto
             end: params.timeRange.end ?? undefined,
           }
         : undefined,
-      chatIds: selectedChatIds.value.length > 0
-        ? selectedChatIds.value.map(id => id.toString())
-        : undefined,
+      chatIds,
     })
 
     const { messages } = await waitForEventWithTimeout(bridge.waitForEvent(
@@ -57,6 +66,10 @@ export function useAIChatToolExecutors({ selectedChatIds }: UseAIChatToolExecuto
   }
 
   async function retrieveContext(params: RetrieveContextParams) {
+    const allowed = resolveWhitelistedSearchChatIds([params.chatId], accountSettings.value)
+    if (allowed.length === 0)
+      return []
+
     const requestId = createRequestId()
 
     bridge.sendEvent(CoreEventType.StorageSearchMessages, {
@@ -84,11 +97,15 @@ export function useAIChatToolExecutors({ selectedChatIds }: UseAIChatToolExecuto
   async function getDialogs(_: GetDialogsParams) {
     bridge.sendEvent(CoreEventType.StorageFetchDialogs)
     const { dialogs } = await waitForEventWithTimeout(bridge.waitForEvent(CoreEventType.StorageDialogs))
-    return dialogs as CoreDialog[]
+    return filterDialogsByWhitelist(dialogs as CoreDialog[], accountSettings.value)
   }
 
   async function searchPhotos(params: SearchPhotosParams) {
     logger.withFields({ params }).log('searchPhotos executor called')
+
+    const chatIds = scopedChatIds()
+    if (chatIds.length === 0)
+      return []
 
     const requestId = createRequestId()
 
@@ -100,9 +117,7 @@ export function useAIChatToolExecutors({ selectedChatIds }: UseAIChatToolExecuto
         limit: params.limit,
         offset: 0,
       },
-      chatIds: selectedChatIds.value.length > 0
-        ? selectedChatIds.value.map(id => id.toString())
-        : undefined,
+      chatIds,
     })
 
     const { photos } = await waitForEventWithTimeout(bridge.waitForEvent(
@@ -111,10 +126,15 @@ export function useAIChatToolExecutors({ selectedChatIds }: UseAIChatToolExecuto
     ))
 
     logger.withFields({ photosCount: photos.length }).log('searchPhotos received response')
-    return photos as CoreRetrievalPhoto[]
+    const allowed = new Set(chatIds)
+    return (photos as CoreRetrievalPhoto[]).filter(photo => photo.chatId != null && allowed.has(String(photo.chatId)))
   }
 
   async function chatNote(params: ChatNoteParams) {
+    const allowed = resolveWhitelistedSearchChatIds([params.chatId], accountSettings.value)
+    if (allowed.length === 0)
+      return ''
+
     bridge.sendEvent(CoreEventType.StorageChatNote, params)
     const { note } = await waitForEventWithTimeout(bridge.waitForEvent(CoreEventType.StorageChatNoteData))
     return note ?? ''
