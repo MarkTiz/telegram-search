@@ -133,8 +133,12 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
 
     const accountId = ctx.getCurrentAccountId()
 
-    if (params.content.length === 0) {
-      return
+    const emitSearchMessagesData = (messages: DBRetrievalMessages[], hasMore = false) => {
+      ctx.emitter.emit(CoreEventType.StorageSearchMessagesData, {
+        messages: convertToCoreRetrievalMessages(messages),
+        hasMore,
+        requestId: params.requestId,
+      })
     }
 
     if (params.chatId) {
@@ -142,8 +146,51 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
 
       if (!hasAccess) {
         ctx.withError('Unauthorized chat access', 'Account does not have access to requested chat messages')
+        emitSearchMessagesData([])
         return
       }
+    }
+
+    // Overfetch by 1 to detect whether more results exist beyond the requested page.
+    const requestedLimit = params.pagination?.limit ?? 10
+    const overfetchPagination = params.pagination
+      ? { ...params.pagination, limit: requestedLimit + 1 }
+      : { limit: requestedLimit + 1, offset: 0 }
+
+    // Empty content: used by retrieveContext (chatId + timeRange). Always reply so
+    // waitForEventWithTimeout on the client cannot hang.
+    if (params.content.length === 0) {
+      const chatIds = params.chatId
+        ? [params.chatId]
+        : params.chatIds
+
+      if (!chatIds?.length && params.timeRange?.start == null && params.timeRange?.end == null) {
+        logger.verbose('Empty content without chat/time filters, returning empty results')
+        emitSearchMessagesData([])
+        return
+      }
+
+      const timeRange = {
+        start: params.timeRange?.start ?? 0,
+        end: params.timeRange?.end ?? Math.floor(Date.now() / 1000) + 86_400,
+      }
+
+      // Newest-first so "messages before targetTimestamp" returns nearby context.
+      const rows = (await dbModels.chatMessageModels.fetchMessagesByTimeRange(
+        ctx.getDB(),
+        accountId,
+        timeRange,
+        chatIds,
+        overfetchPagination,
+        params.fromUserId,
+        'desc',
+      )).expect('Failed to retrieve messages by time range')
+
+      const hasMore = rows.length > requestedLimit
+      const trimmed = hasMore ? rows.slice(0, requestedLimit) : rows
+      logger.withFields({ count: trimmed.length, hasMore }).verbose('Retrieved context messages')
+      emitSearchMessagesData(trimmed as DBRetrievalMessages[], hasMore)
+      return
     }
 
     // Prepare filters from params
@@ -155,12 +202,6 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
 
     const embeddingSettings = (await ctx.getAccountSettings()).embedding
     const embeddingDimension = embeddingSettings.dimension
-
-    // Overfetch by 1 to detect whether more results exist beyond the requested page.
-    const requestedLimit = params.pagination?.limit ?? 10
-    const overfetchPagination = params.pagination
-      ? { ...params.pagination, limit: requestedLimit + 1 }
-      : { limit: requestedLimit + 1, offset: 0 }
 
     let dbMessages: DBRetrievalMessages[] = []
     if (params.useVector) {
@@ -196,10 +237,7 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
     const trimmedMessages = hasMore ? dbMessages.slice(0, requestedLimit) : dbMessages
 
     logger.withFields({ count: trimmedMessages.length, hasMore }).verbose('Retrieved messages')
-
-    const coreMessages = convertToCoreRetrievalMessages(trimmedMessages)
-
-    ctx.emitter.emit(CoreEventType.StorageSearchMessagesData, { messages: coreMessages, hasMore, requestId: params.requestId })
+    emitSearchMessagesData(trimmedMessages, hasMore)
   })
 
   ctx.emitter.on(CoreEventType.StorageSearchPhotos, async (params) => {
@@ -320,6 +358,8 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
 
     if (!hasAccess) {
       ctx.withError('Unauthorized chat access', 'Account does not have access to requested chat note')
+      // Always reply so AI chat waitForEventWithTimeout cannot hang.
+      ctx.emitter.emit(CoreEventType.StorageChatNoteData, { chatId, note: '' })
       return
     }
 
@@ -330,6 +370,7 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
     }
     else {
       ctx.withError('Failed to record chat note', 'Failed to record chat note')
+      ctx.emitter.emit(CoreEventType.StorageChatNoteData, { chatId, note: '' })
     }
   })
 }

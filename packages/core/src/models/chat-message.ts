@@ -397,6 +397,7 @@ async function fetchMessagesByTimeRange(
   chatIds?: string[],
   pagination?: CorePagination,
   fromUserId?: string,
+  order: 'asc' | 'desc' = 'asc',
 ): PromiseResult<DBSelectMessage[]> {
   return withResult(async () => {
     const conditions = [
@@ -419,15 +420,25 @@ async function fetchMessagesByTimeRange(
       conditions.push(eq(chatMessagesTable.from_id, fromUserId))
     }
 
+    const timestampOrder = order === 'desc'
+      ? desc(chatMessagesTable.platform_timestamp)
+      : asc(chatMessagesTable.platform_timestamp)
+    const chatIdOrder = order === 'desc'
+      ? desc(chatMessagesTable.in_chat_id)
+      : asc(chatMessagesTable.in_chat_id)
+    const messageIdOrder = order === 'desc'
+      ? desc(chatMessagesTable.platform_message_id)
+      : asc(chatMessagesTable.platform_message_id)
+
     const results = await db
       .select({ chat_messages: chatMessagesTable })
       .from(chatMessagesTable)
       .innerJoin(joinedChatsTable, eq(chatMessagesTable.in_chat_id, joinedChatsTable.chat_id))
       .where(and(...conditions))
       .orderBy(
-        asc(chatMessagesTable.platform_timestamp),
-        asc(chatMessagesTable.in_chat_id),
-        asc(chatMessagesTable.platform_message_id),
+        timestampOrder,
+        chatIdOrder,
+        messageIdOrder,
       )
       .limit(pagination?.limit ?? 1000)
       .offset(pagination?.offset ?? 0)

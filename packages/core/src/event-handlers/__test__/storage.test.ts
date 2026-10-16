@@ -143,17 +143,47 @@ describe('storage event handlers - message access control', () => {
       })
     })
 
+    const dataPromise = new Promise<{ messages: unknown[], requestId?: string }>((resolve) => {
+      ctx.emitter.on(CoreEventType.StorageSearchMessagesData, (data) => {
+        resolve(data)
+      })
+    })
+
     ctx.emitter.emit(CoreEventType.StorageSearchMessages, {
+      requestId: 'req-unauth',
       chatId: CHAT_ID,
       content: 'test search',
       useVector: false,
       pagination: { limit: 20, offset: 0 },
     })
 
-    const error = await errorPromise
+    const [error, data] = await Promise.all([errorPromise, dataPromise])
 
     expect(error).toBe('Unauthorized chat access')
+    expect(data).toEqual({ messages: [], hasMore: false, requestId: 'req-unauth' })
     expect(isChatAccessibleByAccount).toHaveBeenCalledWith(expect.anything(), ACCOUNT_ID, CHAT_ID)
+    expect(retrieveMessages).not.toHaveBeenCalled()
+  })
+
+  it('storage:search:messages should emit empty data when content is empty without filters', async () => {
+    const ctx = createCoreContext(getMockEmptyDB, models, logger)
+    registerStorageEventHandlers(ctx, logger, models)
+    ctx.setCurrentAccountId('account-empty')
+
+    const dataPromise = new Promise<{ messages: unknown[], hasMore: boolean, requestId?: string }>((resolve) => {
+      ctx.emitter.on(CoreEventType.StorageSearchMessagesData, (data) => {
+        resolve(data)
+      })
+    })
+
+    ctx.emitter.emit(CoreEventType.StorageSearchMessages, {
+      requestId: 'req-empty',
+      content: '',
+      useVector: false,
+      pagination: { limit: 5, offset: 0 },
+    })
+
+    await expect(dataPromise).resolves.toEqual({ messages: [], hasMore: false, requestId: 'req-empty' })
     expect(retrieveMessages).not.toHaveBeenCalled()
   })
 })
