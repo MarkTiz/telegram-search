@@ -7,6 +7,7 @@ import type { CoreDialog, DialogType } from '../types/dialog'
 
 import { convertToCoreRetrievalMessages } from '../models/utils/message'
 import { CoreEventType } from '../types/events'
+import { getSyncWhitelistChatIds } from '../utils/account-settings'
 import { embedContents } from '../utils/embed'
 
 export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, dbModels: Models) {
@@ -88,8 +89,20 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
       return
     }
 
-    const result = await dbModels.chatModels.recordChats(ctx.getDB(), dialogs, accountId)
-    logger.withFields({ count: result.length }).verbose('Successfully recorded dialogs')
+    // Keep full dialog list for the Sync whitelist picker UI, but never seed
+    // sync pts for chats outside the whitelist (empty whitelist => all pts 0).
+    const accountSettings = await ctx.getAccountSettings()
+    const whitelist = getSyncWhitelistChatIds(accountSettings)
+    const whitelistSet = new Set(whitelist.map(String))
+    const dialogsToRecord = dialogs.map((dialog) => {
+      if (whitelistSet.has(String(dialog.id)))
+        return dialog
+      return { ...dialog, pts: 0 }
+    })
+
+    const result = await dbModels.chatModels.recordChats(ctx.getDB(), dialogsToRecord, accountId)
+    const cleared = await dbModels.chatModels.clearSyncPtsOutsideWhitelist(ctx.getDB(), accountId, whitelist)
+    logger.withFields({ count: result.length, clearedPts: cleared, whitelistSize: whitelist.length }).verbose('Successfully recorded dialogs')
   })
 
   ctx.emitter.on(CoreEventType.StorageRecordChatFolders, async ({ folders, accountId }) => {

@@ -90,7 +90,8 @@ export function registerGramEventsEventHandlers(
 
     ctx.emitter.on(CoreEventType.GramMessageEdited, async ({ message, pts, date, isChannel }) => {
       const chatId = getChatIdFromMessage(message)
-      if (chatId) {
+      const accountSettings = await ctx.getAccountSettings()
+      if (chatId && isChatAllowedBySyncWhitelist(accountSettings, chatId)) {
         ctx.emitter.emit(CoreEventType.MessageUpdated, {
           chatId,
           messageId: message.id.toString(),
@@ -105,10 +106,16 @@ export function registerGramEventsEventHandlers(
       if (messageIds.length === 0)
         return
 
+      const accountSettings = await ctx.getAccountSettings()
+      const chatAllowed = chatId ? isChatAllowedBySyncWhitelist(accountSettings, chatId) : false
+
+      // Soft-delete any leftover local rows, but only advance sync pts for
+      // whitelisted chats (channel) or account-level non-channel updates.
       const deletedCount = await chatMessageModels.softDeleteMessages(ctx.getDB(), accountId, messageIds, chatId ? { chatId } : undefined)
 
       if (isChannel && chatId && pts !== undefined) {
-        await chatModels.updateChatPts(ctx.getDB(), accountId, chatId, pts)
+        if (chatAllowed)
+          await chatModels.updateChatPts(ctx.getDB(), accountId, chatId, pts)
       }
       else if (!isChannel && pts !== undefined) {
         await accountModels.updateAccountState(ctx.getDB(), accountId, {

@@ -70,7 +70,11 @@ function createMockCtx(client: any) {
     cleanup: () => {},
     setMyUser: () => {},
     getMyUser: () => ({}) as unknown as CoreUserEntity,
-    getAccountSettings: async () => ({}) as unknown as AccountSettings,
+    getAccountSettings: async () => ({
+      messageProcessing: {
+        whitelistChatIds: ['123', '456', 'chat-1', 'chat-2'],
+      },
+    }) as unknown as AccountSettings,
     setAccountSettings: async () => {},
     metrics: undefined,
   }
@@ -586,6 +590,41 @@ describe('takeout service', () => {
     await fetchStats
 
     expect(mockChatMessageStatsModels.getChatMessageStatsByChatId).toHaveBeenCalledOnce()
+  })
+
+  it('fetchChatSyncStats skips Telegram GetHistory outside the sync whitelist', async () => {
+    mockChatMessageStatsModels.getChatMessageStatsByChatId.mockReset()
+    mockChatMessageStatsModels.getChatMessageStatsByChatId.mockResolvedValue({
+      unwrap: () => ({
+        message_count: 2,
+        first_message_id: 1,
+        latest_message_id: 2,
+      }),
+    })
+
+    const client = {
+      invoke: vi.fn(async () => {
+        throw new Error('GetHistory should not run outside whitelist')
+      }),
+    }
+    const { ctx } = createMockCtx(client)
+    ctx.getAccountSettings = async () => ({
+      messageProcessing: { whitelistChatIds: ['999'] },
+    }) as unknown as typeof ctx.getAccountSettings
+
+    const emitted: any[] = []
+    ctx.emitter.on(CoreEventType.TakeoutStatsData, (data: any) => emitted.push(data))
+
+    const service = createTakeoutService(ctx, logger, mockChatModels, mockChatMessageStatsModels, mockEntityService)
+    await service.fetchChatSyncStats('123')
+
+    expect(client.invoke).not.toHaveBeenCalled()
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0]).toMatchObject({
+      chatId: '123',
+      totalMessages: 2,
+      syncedMessages: 2,
+    })
   })
 
   it('takeoutMessages should fail closed when takeout initialization fails', async () => {

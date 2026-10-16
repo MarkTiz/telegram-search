@@ -7,7 +7,7 @@ import type { CoreEntity } from '../types/events'
 import type { PromiseResult } from '../utils/result'
 import type { DBSelectChat, DBSelectChatWithAccount } from './utils/types'
 
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 
 import { accountJoinedChatsTable } from '../schemas/account-joined-chats'
 import { joinedChatsTable } from '../schemas/joined-chats'
@@ -181,12 +181,54 @@ async function updateChatPts(db: CoreDB, accountId: string, chatId: string, pts:
     ))
 }
 
+
+/**
+ * Clear sync pts checkpoints for chats not in the sync whitelist.
+ * Empty whitelist clears all pts for the account so catch-up never targets any chat.
+ */
+async function clearSyncPtsOutsideWhitelist(
+  db: CoreDB,
+  accountId: string,
+  whitelistChatIds: string[],
+): Promise<number> {
+  const rows = await db
+    .select({
+      id: accountJoinedChatsTable.id,
+      chat_id: joinedChatsTable.chat_id,
+    })
+    .from(accountJoinedChatsTable)
+    .innerJoin(
+      joinedChatsTable,
+      eq(joinedChatsTable.id, accountJoinedChatsTable.joined_chat_id),
+    )
+    .where(and(
+      eq(accountJoinedChatsTable.account_id, accountId),
+      gt(accountJoinedChatsTable.pts, 0),
+    ))
+
+  const whitelistSet = new Set(whitelistChatIds.map(String))
+  const toClear = rows
+    .filter(row => !whitelistSet.has(String(row.chat_id)))
+    .map(row => row.id)
+
+  if (toClear.length === 0)
+    return 0
+
+  await db
+    .update(accountJoinedChatsTable)
+    .set({ pts: 0 })
+    .where(inArray(accountJoinedChatsTable.id, toClear))
+
+  return toClear.length
+}
+
 export const chatModels = {
   recordChats,
   fetchChats,
   fetchChatsByAccountId,
   isChatAccessibleByAccount,
   updateChatPts,
+  clearSyncPtsOutsideWhitelist,
   findChatAccessHash,
   recordChatEntity,
   getOrModifyChatNote,

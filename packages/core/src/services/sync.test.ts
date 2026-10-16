@@ -73,6 +73,11 @@ function harness(invoke: (request: unknown) => Promise<unknown>, options: { wrap
     getClient: () => ({ invoke }),
     getCurrentAccountId: () => 'account-1',
     getDB: () => ({}),
+    getAccountSettings: async () => ({
+      messageProcessing: {
+        whitelistChatIds: ['42', '99'],
+      },
+    }),
     withError: vi.fn(error => error instanceof Error ? error : new Error(String(error))),
   }
   return { context, emitter, service: createSyncService(context as never, logger() as never) }
@@ -83,9 +88,14 @@ afterEach(() => {
 })
 
 describe('sync catch-up checkpoints', () => {
+  function mockChatCheckpoints(chats: unknown[] = []) {
+    vi.spyOn(chatModels, 'fetchChatsByAccountId').mockResolvedValue(Ok(chats) as never)
+    vi.spyOn(chatModels, 'clearSyncPtsOutsideWhitelist').mockResolvedValue(0)
+  }
+
   it('emits idle when the account has no pts gap', async () => {
     vi.spyOn(accountModels, 'findAccountByUUID').mockResolvedValue(Ok(account()) as never)
-    vi.spyOn(chatModels, 'fetchChatsByAccountId').mockResolvedValue(Ok([]) as never)
+    mockChatCheckpoints([])
     const { emitter, service } = harness(async request => request instanceof Api.updates.GetState ? state(10) : undefined)
     const statuses: string[] = []
     emitter.on(CoreEventType.SyncStatus, ({ status }) => statuses.push(status))
@@ -98,7 +108,7 @@ describe('sync catch-up checkpoints', () => {
   it('persists recovered messages, edits, and deletes before advancing pts', async () => {
     const updateState = vi.spyOn(accountModels, 'updateAccountState').mockResolvedValue(Ok(account({ pts: 20 })) as never)
     vi.spyOn(accountModels, 'findAccountByUUID').mockResolvedValue(Ok(account()) as never)
-    vi.spyOn(chatModels, 'fetchChatsByAccountId').mockResolvedValue(Ok([]) as never)
+    mockChatCheckpoints([])
     const softDelete = vi.spyOn(chatMessageModels, 'softDeleteMessages').mockResolvedValue(1)
     const edited = message(2, 'edited')
     const difference = new Api.updates.Difference({
@@ -140,7 +150,7 @@ describe('sync catch-up checkpoints', () => {
   it('removes batch completion listeners when CoreContext wraps on()', async () => {
     vi.spyOn(accountModels, 'findAccountByUUID').mockResolvedValue(Ok(account()) as never)
     vi.spyOn(accountModels, 'updateAccountState').mockResolvedValue(Ok(account({ pts: 20 })) as never)
-    vi.spyOn(chatModels, 'fetchChatsByAccountId').mockResolvedValue(Ok([]) as never)
+    mockChatCheckpoints([])
     const difference = new Api.updates.Difference({
       newMessages: [message(1)],
       newEncryptedMessages: [],
@@ -187,12 +197,12 @@ describe('sync catch-up checkpoints', () => {
   it('recovers channel messages before advancing the channel pts', async () => {
     vi.spyOn(accountModels, 'findAccountByUUID').mockResolvedValue(Ok(account()) as never)
     const updateChatPts = vi.spyOn(chatModels, 'updateChatPts').mockResolvedValue()
-    vi.spyOn(chatModels, 'fetchChatsByAccountId').mockResolvedValue(Ok([{
+    mockChatCheckpoints([{
       chat_id: '99',
       chat_type: 'channel',
       access_hash: '123',
       pts: 5,
-    }]) as never)
+    }])
     const channelMessage = new Api.Message({
       id: 7,
       peerId: new Api.PeerChannel({ channelId: bigInt(99) }),
@@ -226,5 +236,60 @@ describe('sync catch-up checkpoints', () => {
     await service.catchUp()
 
     expect(updateChatPts).toHaveBeenCalledWith(expect.anything(), 'account-1', '99', 8)
+  })
+
+  it('skips GetChannelDifference for chats outside the sync whitelist', async () => {
+    vi.spyOn(accountModels, 'findAccountByUUID').mockResolvedValue(Ok(account()) as never)
+    const updateChatPts = vi.spyOn(chatModels, 'updateChatPts').mockResolvedValue()
+    const clearPts = vi.spyOn(chatModels, 'clearSyncPtsOutsideWhitelist').mockResolvedValue(1)
+    vi.spyOn(chatModels, 'fetchChatsByAccountId').mockResolvedValue(Ok([{
+      chat_id: '1915498639',
+      chat_type: 'channel',
+      access_hash: '123',
+      pts: 5,
+    }]) as never)
+    const invoke = vi.fn(async (request: unknown) => {
+      if (request instanceof Api.updates.GetState)
+        return state(10)
+      if (request instanceof Api.updates.GetChannelDifference)
+        throw new Error('GetChannelDifference should not run for non-whitelist chats')
+      throw new Error('Unexpected request')
+    })
+    const { emitter, service, context } = harness(invoke)
+    context.getAccountSettings = async () => ({
+      messageProcessing: { whitelistChatIds: ['99'] },
+    })
+
+    const statuses: string[] = []
+    emitter.on(CoreEventType.SyncStatus, ({ status }) => statuses.push(status))
+    await service.catchUp()
+
+    expect(statuses).toEqual(['syncing', 'idle'])
+    expect(clearPts).toHaveBeenCalled()
+    expect(updateChatPts).not.toHaveBeenCalled()
+    expect(invoke.mock.calls.some(([req]) => req instanceof Api.updates.GetChannelDifference)).toBe(false)
+  })
+
+  it('skips channel catch-up entirely when the sync whitelist is empty', async () => {
+    vi.spyOn(accountModels, 'findAccountByUUID').mockResolvedValue(Ok(account()) as never)
+    const clearPts = vi.spyOn(chatModels, 'clearSyncPtsOutsideWhitelist').mockResolvedValue(2)
+    const fetchChats = vi.spyOn(chatModels, 'fetchChatsByAccountId')
+    const invoke = vi.fn(async (request: unknown) => {
+      if (request instanceof Api.updates.GetState)
+        return state(10)
+      throw new Error('Unexpected request')
+    })
+    const { emitter, service, context } = harness(invoke)
+    context.getAccountSettings = async () => ({
+      messageProcessing: { whitelistChatIds: [] },
+    })
+
+    const statuses: string[] = []
+    emitter.on(CoreEventType.SyncStatus, ({ status }) => statuses.push(status))
+    await service.catchUp()
+
+    expect(statuses).toEqual(['syncing', 'idle'])
+    expect(clearPts).toHaveBeenCalledWith(expect.anything(), 'account-1', [])
+    expect(fetchChats).not.toHaveBeenCalled()
   })
 })

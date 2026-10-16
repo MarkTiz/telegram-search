@@ -49,6 +49,8 @@ const recordChats = vi.fn(async (_db: unknown, _dialogs: CoreDialog[], _accountI
   }
 })
 
+const clearSyncPtsOutsideWhitelist = vi.fn(async () => 0)
+
 // Message-related mocks
 const isChatAccessibleByAccount = vi.fn(async (_db: unknown, _accountId: string, _chatId: string) => Ok(true))
 const retrieveMessages = vi.fn(async (_db: unknown, _accountId: string, _dimension: unknown, _content: unknown, _pagination: unknown, _filters: unknown) => Ok([] as unknown[]))
@@ -58,11 +60,17 @@ const models = {
     fetchChatsByAccountId,
     getChatMessagesStats,
     recordChats,
+    clearSyncPtsOutsideWhitelist,
     isChatAccessibleByAccount,
     retrieveMessages,
   },
   chatMessageStatsModels: {
     getChatMessagesStats,
+  },
+  accountSettingsModels: {
+    fetchSettingsByAccountId: vi.fn(async () => Ok({
+      messageProcessing: { whitelistChatIds: [] },
+    })),
   },
 } as unknown as Models
 
@@ -104,7 +112,10 @@ describe('storage event handlers - dialogs with accounts', () => {
   })
 
   it('storage:record:dialogs should call recordChats with dialogs and accountId', async () => {
+    recordChats.mockClear()
+    clearSyncPtsOutsideWhitelist.mockClear()
     const ctx = createCoreContext(getMockEmptyDB, models, logger)
+    ctx.setCurrentAccountId('account-abc')
     registerStorageEventHandlers(ctx, logger, models)
 
     const ACCOUNT_ID = 'account-abc'
@@ -114,13 +125,49 @@ describe('storage event handlers - dialogs with accounts', () => {
         name: 'Another Chat',
         type: 'group',
         messageCount: 0,
+        pts: 42,
       },
     ]
 
     ctx.emitter.emit(CoreEventType.StorageRecordDialogs, { dialogs, accountId: ACCOUNT_ID })
+    await vi.waitFor(() => expect(clearSyncPtsOutsideWhitelist).toHaveBeenCalled())
 
     expect(recordChats).toHaveBeenCalledTimes(1)
+    // Empty whitelist forces pts=0 so catch-up never targets non-enabled chats.
+    expect(recordChats).toHaveBeenCalledWith(
+      expect.anything(),
+      [{ ...dialogs[0], pts: 0 }],
+      ACCOUNT_ID,
+    )
+    expect(clearSyncPtsOutsideWhitelist).toHaveBeenCalledWith(expect.anything(), ACCOUNT_ID, [])
+  })
+
+  it('storage:record:dialogs keeps pts for whitelisted chats', async () => {
+    recordChats.mockClear()
+    clearSyncPtsOutsideWhitelist.mockClear()
+    const ctx = createCoreContext(getMockEmptyDB, models, logger)
+    ctx.setCurrentAccountId('account-wl')
+    ctx.getAccountSettings = async () => ({
+      messageProcessing: { whitelistChatIds: ['2001'] },
+    }) as unknown as typeof ctx.getAccountSettings
+    registerStorageEventHandlers(ctx, logger, models)
+
+    const ACCOUNT_ID = 'account-wl'
+    const dialogs: CoreDialog[] = [
+      {
+        id: 2001,
+        name: 'Whitelisted Chat',
+        type: 'channel',
+        messageCount: 0,
+        pts: 99,
+      },
+    ]
+
+    ctx.emitter.emit(CoreEventType.StorageRecordDialogs, { dialogs, accountId: ACCOUNT_ID })
+    await vi.waitFor(() => expect(clearSyncPtsOutsideWhitelist).toHaveBeenCalled())
+
     expect(recordChats).toHaveBeenCalledWith(expect.anything(), dialogs, ACCOUNT_ID)
+    expect(clearSyncPtsOutsideWhitelist).toHaveBeenCalledWith(expect.anything(), ACCOUNT_ID, ['2001'])
   })
 })
 

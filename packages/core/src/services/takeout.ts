@@ -16,6 +16,7 @@ import { Api } from 'telegram'
 
 import { MESSAGE_PROCESS_BATCH_SIZE, TELEGRAM_HISTORY_INTERVAL_MS } from '../constants'
 import { CoreEventType } from '../types/events'
+import { isChatAllowedBySyncWhitelist } from '../utils/account-settings'
 import { createMinIntervalWaiter } from '../utils/min-interval'
 import { waitForEvent } from '../utils/promise'
 import { createTask } from '../utils/task'
@@ -698,9 +699,7 @@ export function createTakeoutService(
 
     // Restrict Takeout to account sync whitelist (empty whitelist = no chats).
     const accountSettings = await ctx.getAccountSettings()
-    const whitelist = accountSettings.messageProcessing?.whitelistChatIds ?? []
-    const allowed = new Set(whitelist.map(String))
-    chatIds = chatIds.filter(id => allowed.has(String(id)))
+    chatIds = chatIds.filter(id => isChatAllowedBySyncWhitelist(accountSettings, id))
     if (chatIds.length === 0) {
       logger.warn('Takeout skipped: sync whitelist is empty or no selected chats are enabled')
       return
@@ -862,8 +861,19 @@ export function createTakeoutService(
     logger.withFields({ chatId }).verbose('Fetching chat sync stats')
 
     try {
-      // Get total message count from Telegram
-      const totalMessageCount = (await getTotalMessageCount(chatId)) ?? 0
+      const accountSettings = await ctx.getAccountSettings()
+      const allowed = isChatAllowedBySyncWhitelist(accountSettings, chatId)
+
+      // Get total message count from Telegram only for whitelisted chats.
+      // Outside the whitelist (or empty whitelist), emit local-only stats so
+      // the UI settles without a GetHistory call.
+      let totalMessageCount = 0
+      if (allowed) {
+        totalMessageCount = (await getTotalMessageCount(chatId)) ?? 0
+      }
+      else {
+        logger.withFields({ chatId }).verbose('Skipping Telegram history count outside sync whitelist')
+      }
 
       // Read local state after the remote request. A slow Telegram count must
       // not overwrite newer persisted-message statistics with an old snapshot.
@@ -872,6 +882,8 @@ export function createTakeoutService(
       const syncedMessages = stats?.message_count ?? 0
       const firstMessageId = stats?.first_message_id ?? 0
       const latestMessageId = stats?.latest_message_id ?? 0
+      if (!allowed)
+        totalMessageCount = syncedMessages
 
       // Calculate synced ranges
       const syncedRanges: Array<{ start: number, end: number }> = []

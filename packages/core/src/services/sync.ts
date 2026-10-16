@@ -12,7 +12,7 @@ import { accountModels } from '../models/accounts'
 import { chatMessageModels } from '../models/chat-message'
 import { chatModels } from '../models/chats'
 import { CoreEventType } from '../types/events'
-import { isChatAllowedBySyncWhitelist } from '../utils/account-settings'
+import { getSyncWhitelistChatIds, isChatAllowedBySyncWhitelist } from '../utils/account-settings'
 
 const MESSAGE_PROCESS_TIMEOUT_MS = 60_000
 const CHANNEL_DIFFERENCE_LIMIT = 100
@@ -127,9 +127,11 @@ export function createSyncService(ctx: CoreContext, logger: Logger) {
 
     await persistMessages([...messages.values()])
 
+    const accountSettings = await ctx.getAccountSettings()
+
     for (const message of editedMessages) {
       const chatId = chatIdFromMessage(message)
-      if (chatId) {
+      if (chatId && isChatAllowedBySyncWhitelist(accountSettings, chatId)) {
         ctx.emitter.emit(CoreEventType.MessageUpdated, {
           chatId,
           messageId: message.id.toString(),
@@ -145,6 +147,8 @@ export function createSyncService(ctx: CoreContext, logger: Logger) {
       }
       else if (update instanceof Api.UpdateDeleteChannelMessages) {
         const chatId = update.channelId.toString()
+        if (!isChatAllowedBySyncWhitelist(accountSettings, chatId))
+          continue
         const messageIds = update.messages.map(String)
         await chatMessageModels.softDeleteMessages(ctx.getDB(), accountId, messageIds, { chatId })
         ctx.emitter.emit(CoreEventType.MessageDeleted, { chatId, messageIds })
@@ -235,9 +239,30 @@ export function createSyncService(ctx: CoreContext, logger: Logger) {
 
   async function catchUpChannels(accountId: string): Promise<void> {
     const client = ctx.getClient()
+    const accountSettings = await ctx.getAccountSettings()
+    const whitelist = getSyncWhitelistChatIds(accountSettings)
+    const whitelistSet = new Set(whitelist.map(String))
+
+    // Drop pts for chats outside the whitelist so stale checkpoints (e.g. joined
+    // but never enabled) never become GetChannelDifference targets again.
+    const cleared = await chatModels.clearSyncPtsOutsideWhitelist(ctx.getDB(), accountId, whitelist)
+    if (cleared > 0) {
+      logger.withFields({ cleared, whitelistSize: whitelist.length }).verbose('Cleared sync pts outside whitelist')
+    }
+
+    if (whitelist.length === 0) {
+      logger.verbose('Sync whitelist empty; skipping channel catch-up')
+      return
+    }
+
     const channels = (await chatModels.fetchChatsByAccountId(ctx.getDB(), accountId))
       .expect('Failed to load channel checkpoints')
-      .filter(chat => (chat.chat_type === 'channel' || chat.chat_type === 'supergroup') && chat.access_hash && chat.pts > 0)
+      .filter(chat =>
+        (chat.chat_type === 'channel' || chat.chat_type === 'supergroup')
+        && chat.access_hash
+        && chat.pts > 0
+        && whitelistSet.has(String(chat.chat_id)),
+      )
 
     for (const chat of channels) {
       const channel = new Api.InputChannel({
