@@ -177,17 +177,49 @@ async function softDeleteMessages(
   return result.length
 }
 
+export interface FetchChatMessagesOptions {
+  /** Platform message ID exclusive upper bound (read strictly older / below). */
+  beforeMessageId?: number
+  /** Platform message ID exclusive lower bound (read strictly newer / above). */
+  afterMessageId?: number
+  /** Default desc (newest first). Use asc when paging toward newer messages. */
+  order?: 'asc' | 'desc'
+}
+
 /**
  * Fetch messages for a specific account.
- * @deprecated Use fetchMessagesByTimeRange instead.
+ * Newest-first by Telegram platform message id (archive timeline).
  */
 async function fetchMessages(
   db: CoreDB,
   accountId: string,
   chatId: string,
   pagination: CorePagination,
+  options: FetchChatMessagesOptions = {},
 ): PromiseResult<{ dbMessagesResults: DBSelectMessage[], coreMessages: CoreMessage[] }> {
   return withResult(async () => {
+    const conditions = [
+      eq(chatMessagesTable.in_chat_id, chatId),
+      notDeletedCondition(),
+      // ACL: for private dialogs, only return messages owned by this account (or legacy NULL owner).
+      sql`(
+        ${joinedChatsTable.chat_type} != 'user'
+        OR ${chatMessagesTable.owner_account_id} = ${accountId}
+        OR ${chatMessagesTable.owner_account_id} IS NULL
+      )`,
+    ]
+
+    if (options.beforeMessageId !== undefined && options.beforeMessageId > 0) {
+      conditions.push(sql`(${chatMessagesTable.platform_message_id})::bigint < ${options.beforeMessageId}`)
+    }
+    if (options.afterMessageId !== undefined && options.afterMessageId >= 0) {
+      conditions.push(sql`(${chatMessagesTable.platform_message_id})::bigint > ${options.afterMessageId}`)
+    }
+
+    const messageIdOrder = options.order === 'asc'
+      ? asc(sql`(${chatMessagesTable.platform_message_id})::bigint`)
+      : desc(sql`(${chatMessagesTable.platform_message_id})::bigint`)
+
     const dbMessagesResults = await db
       .select({
         chat_messages: chatMessagesTable,
@@ -195,17 +227,8 @@ async function fetchMessages(
       })
       .from(chatMessagesTable)
       .innerJoin(joinedChatsTable, eq(chatMessagesTable.in_chat_id, joinedChatsTable.chat_id))
-      .where(and(
-        eq(chatMessagesTable.in_chat_id, chatId),
-        notDeletedCondition(),
-        // ACL: for private dialogs, only return messages owned by this account (or legacy NULL owner).
-        sql`(
-        ${joinedChatsTable.chat_type} != 'user'
-        OR ${chatMessagesTable.owner_account_id} = ${accountId}
-        OR ${chatMessagesTable.owner_account_id} IS NULL
-      )`,
-      ))
-      .orderBy(desc(chatMessagesTable.created_at))
+      .where(and(...conditions))
+      .orderBy(messageIdOrder)
       .limit(pagination.limit)
       .offset(pagination.offset)
 
@@ -218,6 +241,7 @@ async function fetchMessages(
 
 /**
  * Fetch messages with photos for a specific account.
+ * Photos from the photos table (with queryId) replace photo media; other media keep JSON fields.
  */
 async function fetchMessagesWithPhotos(
   db: CoreDB,
@@ -225,9 +249,10 @@ async function fetchMessagesWithPhotos(
   accountId: string,
   chatId: string,
   pagination: CorePagination,
+  options: FetchChatMessagesOptions = {},
 ): PromiseResult<CoreMessage[]> {
   return withResult(async () => {
-    const { dbMessagesResults, coreMessages } = (await fetchMessages(db, accountId, chatId, pagination)).expect('Failed to fetch messages')
+    const { dbMessagesResults, coreMessages } = (await fetchMessages(db, accountId, chatId, pagination, options)).expect('Failed to fetch messages')
 
     // Fetch photos for all messages in batch
     const messageIds = dbMessagesResults.map(msg => msg.id)
@@ -239,12 +264,16 @@ async function fetchMessagesWithPhotos(
       photo => photo.message_id!,
     )
 
-    // Attach photos to messages with proper type conversion
-    return coreMessages.map((message, index) => ({
-      ...message,
-      media: (photosByMessage[dbMessagesResults[index].id] || [])
-        .map(convertDBPhotoToCoreMessageMedia),
-    }) satisfies CoreMessage)
+    // Attach photos to messages with proper type conversion; keep non-photo media (stickers/docs).
+    return coreMessages.map((message, index) => {
+      const dbId = dbMessagesResults[index].id
+      const photoMedia = (photosByMessage[dbId] || []).map(convertDBPhotoToCoreMessageMedia)
+      const otherMedia = (message.media ?? []).filter(media => media.type !== 'photo')
+      return {
+        ...message,
+        media: [...otherMedia, ...photoMedia],
+      } satisfies CoreMessage
+    })
   })
 }
 
@@ -345,11 +374,15 @@ async function fetchMessageContextWithPhotos(
       photo => photo.message_id!,
     )
 
-    return combinedDbMessages.map(message => ({
-      ...convertToCoreMessageFromDB(message),
-      media: (photosByMessage[message.id] || [])
-        .map(convertDBPhotoToCoreMessageMedia),
-    }) satisfies CoreMessage)
+    return combinedDbMessages.map((message) => {
+      const core = convertToCoreMessageFromDB(message)
+      const photoMedia = (photosByMessage[message.id] || []).map(convertDBPhotoToCoreMessageMedia)
+      const otherMedia = (core.media ?? []).filter(media => media.type !== 'photo')
+      return {
+        ...core,
+        media: [...otherMedia, ...photoMedia],
+      } satisfies CoreMessage
+    })
   })
 }
 

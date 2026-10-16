@@ -62,11 +62,12 @@ export const useMessageStore = defineStore('message', () => {
         forwardFromChatName: message.forward.fromChatName,
         forwardFromMessageId: message.forward.fromMessageId,
       },
-      media: message.media.map(media => ({
-        type: ['photo', 'sticker', 'document', 'webpage'].includes(media.type) ? media.type : 'unknown',
+      media: message.media.map(media => createMediaBlob({
+        type: (['photo', 'sticker', 'document', 'webpage'].includes(media.type) ? media.type : 'unknown') as NonNullable<CoreMessage['media']>[number]['type'],
         platformId: media.telegramReference ?? '',
         mimeType: media.mimeType,
-      } as NonNullable<CoreMessage['media']>[number])),
+        queryId: media.queryId,
+      })),
       links: message.links,
       platformTimestamp: message.timestamp,
       updatedAt: message.editedAt,
@@ -486,11 +487,14 @@ export const useMessageStore = defineStore('message', () => {
         // A page can be empty while history remains, for example across a run of
         // service messages. The window cannot anchor past it, so follow the cursor.
         do {
-          const result = await bridge.application.listRemoteMessages({
-            chatId,
+          // Archive mode: only show messages already synced into the local DB.
+          // Never fall back to Telegram remote history for the chat timeline.
+          const result = await bridge.application.queryLocalMessages({
+            chatIds: [chatId],
             limit,
             cursor,
-            minMessageId: direction === 'newer' ? maxId : undefined,
+            minMessageId: direction === 'newer' && Number.isFinite(maxId) ? maxId : undefined,
+            chatTimeline: true,
           })
           if (!result.ok) {
             throw new Error(`${result.error.code}: ${result.error.message}`)

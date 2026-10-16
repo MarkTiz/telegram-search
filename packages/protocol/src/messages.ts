@@ -28,6 +28,12 @@ export const queryLocalMessagesInputSchema = object({
   cursor: optional(string()),
   limit: optional(pipe(number(), minValue(1), maxValue(1000)), 100),
   fromUserId: optional(string()),
+  /**
+   * Archive chat timeline: newest-first by platform message id (same cursor semantics as listRemote).
+   * Requires exactly one chatId. Cursor is a platform message ID to read strictly below.
+   */
+  chatTimeline: optional(boolean(), false),
+  minMessageId: optional(pipe(number(), minValue(0))),
   ...timeRangeFields,
 })
 
@@ -59,6 +65,8 @@ export interface MessageMediaRecord {
   fileName?: string
   mimeType?: string
   telegramReference?: string
+  /** Local DB media id for /api/v1/photos|stickers/:queryId */
+  queryId?: string
 }
 
 export interface MessageLinkRecord {

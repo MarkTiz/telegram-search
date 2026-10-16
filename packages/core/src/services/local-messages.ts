@@ -30,7 +30,57 @@ export function createLocalMessagesService(options: {
 }) {
   const { db, getAccountId, logger, models } = options
 
+  async function queryChatTimeline(input: QueryLocalMessagesInput): Promise<CursorPage<MessageRecord>> {
+    const chatId = input.chatIds?.[0]
+    if (!chatId || (input.chatIds?.length ?? 0) !== 1) {
+      throw new Error('chatTimeline requires exactly one chatId')
+    }
+
+    const beforeMessageId = input.cursor === undefined ? undefined : Number(input.cursor)
+    const afterMessageId = input.minMessageId
+    const pagingNewer = afterMessageId !== undefined && afterMessageId >= 0
+      && !(beforeMessageId !== undefined && Number.isFinite(beforeMessageId) && beforeMessageId > 0)
+
+    const messages = (await models.chatMessageModels.fetchMessagesWithPhotos(
+      db,
+      models.photoModels,
+      getAccountId(),
+      chatId,
+      { limit: input.limit, offset: 0 },
+      {
+        beforeMessageId: beforeMessageId !== undefined && Number.isFinite(beforeMessageId) && beforeMessageId > 0
+          ? beforeMessageId
+          : undefined,
+        afterMessageId: afterMessageId !== undefined && afterMessageId >= 0
+          ? afterMessageId
+          : undefined,
+        // Newer pages: ascending from just above maxId. Older/initial: newest first.
+        order: pagingNewer ? 'asc' : 'desc',
+      },
+    )).expect('Failed to query local chat timeline')
+
+    // Normalize to newest-first pages so the client window matches listRemote behavior.
+    const ordered = pagingNewer ? [...messages].reverse() : messages
+    const items = ordered.map(coreMessageToRecord)
+    if (ordered.length === 0) {
+      return { items: [], nextCursor: null }
+    }
+
+    // For older paging, nextCursor is the oldest id in this page (continue strictly below).
+    // For newer paging the client anchors on maxId via minMessageId, so cursor is unused.
+    const oldestInPage = ordered.at(-1)
+    const nextCursor = pagingNewer
+      ? null
+      : (ordered.length < input.limit ? null : (oldestInPage?.platformMessageId ?? null))
+
+    return { items, nextCursor }
+  }
+
   async function query(input: QueryLocalMessagesInput): Promise<CursorPage<MessageRecord>> {
+    if (input.chatTimeline) {
+      return queryChatTimeline(input)
+    }
+
     const offset = cursorOffset(input.cursor)
     const rows = (await models.chatMessageModels.fetchMessagesByTimeRange(
       db,

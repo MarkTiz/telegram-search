@@ -8,14 +8,14 @@ import { useMessageStore } from '../useMessage'
 // Mock dependencies
 const sendEventMock = vi.fn()
 const waitForEventMock = vi.fn()
-const listRemoteMessagesMock = vi.fn()
+const queryLocalMessagesMock = vi.fn()
 const getLocalMessageContextMock = vi.fn()
 vi.mock('../../composables/useBridge', () => ({
   useBridge: () => ({
     sendEvent: sendEventMock,
     waitForEvent: waitForEventMock,
     application: {
-      listRemoteMessages: listRemoteMessagesMock,
+      queryLocalMessages: queryLocalMessagesMock,
       getLocalMessageContext: getLocalMessageContextMock,
     },
   }),
@@ -136,16 +136,17 @@ describe('useMessageStore', () => {
     let resolvePromise: (value: any) => void
     // eslint-disable-next-line style/max-statements-per-line
     const promise = new Promise((resolve) => { resolvePromise = resolve })
-    listRemoteMessagesMock.mockReturnValue(promise)
+    queryLocalMessagesMock.mockReturnValue(promise)
 
     const fetchPromise = fetchMessages(20, 'older')
 
     expect(isLoading.value).toBe(true)
-    expect(listRemoteMessagesMock).toHaveBeenCalledWith({
-      chatId: 'chat-1',
+    expect(queryLocalMessagesMock).toHaveBeenCalledWith({
+      chatIds: ['chat-1'],
       limit: 20,
       cursor: undefined,
       minMessageId: undefined,
+      chatTimeline: true,
     })
 
     // @ts-expect-error intentionally resolve for test
@@ -164,22 +165,24 @@ describe('useMessageStore', () => {
       createTestMessage({ platformMessageId: '40', chatId: 'chat-1', content: 'msg 40', platformTimestamp: 1000 }),
       createTestMessage({ platformMessageId: '42', chatId: 'chat-1', content: 'msg 42', platformTimestamp: 2000 }),
     ], { chatId: 'chat-1' })
-    listRemoteMessagesMock.mockResolvedValue({ ok: true, data: { items: [], nextCursor: null } })
+    queryLocalMessagesMock.mockResolvedValue({ ok: true, data: { items: [], nextCursor: null } })
 
     await fetchMessages(20, 'older')
     await fetchMessages(20, 'newer')
 
-    expect(listRemoteMessagesMock).toHaveBeenNthCalledWith(1, {
-      chatId: 'chat-1',
+    expect(queryLocalMessagesMock).toHaveBeenNthCalledWith(1, {
+      chatIds: ['chat-1'],
       limit: 20,
       cursor: '40',
       minMessageId: undefined,
+      chatTimeline: true,
     })
-    expect(listRemoteMessagesMock).toHaveBeenNthCalledWith(2, {
-      chatId: 'chat-1',
+    expect(queryLocalMessagesMock).toHaveBeenNthCalledWith(2, {
+      chatIds: ['chat-1'],
       limit: 20,
       cursor: undefined,
       minMessageId: 42,
+      chatTimeline: true,
     })
   })
 
@@ -191,13 +194,13 @@ describe('useMessageStore', () => {
     store.replaceMessages([
       createTestMessage({ platformMessageId: '500', chatId: 'chat-1', content: 'msg 500', platformTimestamp: 2000 }),
     ], { chatId: 'chat-1' })
-    listRemoteMessagesMock
+    queryLocalMessagesMock
       .mockResolvedValueOnce({ ok: true, data: { items: [], nextCursor: '350' } })
       .mockResolvedValueOnce({ ok: true, data: { items: [toMessageRecord(createTestMessage({ platformMessageId: '349', chatId: 'chat-1', content: 'msg 349', platformTimestamp: 1000 }))], nextCursor: '349' } })
 
     await fetchMessages(20, 'older')
 
-    expect(listRemoteMessagesMock.mock.calls.map(([input]) => input.cursor)).toEqual(['500', '350'])
+    expect(queryLocalMessagesMock.mock.calls.map(([input]) => input.cursor)).toEqual(['500', '350'])
     expect(store.sortedMessageIds).toEqual(['349', '500'])
   })
 })

@@ -31,6 +31,7 @@ export function coreMessageToRecord(message: CoreMessage): MessageRecord {
       type: media.type,
       mimeType: media.mimeType,
       telegramReference: media.platformId,
+      queryId: media.queryId,
     })),
     links: message.links ?? [],
     editedAt: message.updatedAt,
