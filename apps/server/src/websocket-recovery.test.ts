@@ -37,7 +37,10 @@ it('answers heartbeats over a real WebSocket and retains the account across reco
     const socket = new WebSocket(url)
     sockets.push(socket)
     const handshake = JSON.parse(await nextMessage(socket))
-    expect(handshake).toEqual({ type: 'server:connected', data: { sessionId: 'recovery-test', accountReady: false } })
+    expect(handshake).toEqual({
+      type: 'server:connected',
+      data: { sessionId: 'recovery-test', accountReady: false, sessionAuthority: 'client' },
+    })
     return socket
   }
 

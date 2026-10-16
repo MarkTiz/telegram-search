@@ -57,6 +57,7 @@ describe('webSocket session recovery', () => {
     setActivePinia(pinia)
     const sessions = useSessionStore()
     sessions.init()
+    sessions.markTransportReady()
     sessions.updateSession(sessions.activeSessionId!, { session: 'saved-session' })
     useWebsocketAdapter()
   })

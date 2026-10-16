@@ -9,7 +9,7 @@ export interface WsEventMeta {
 }
 
 export interface WsEventFromServer {
-  'server:connected': (data: { sessionId: string, accountReady: boolean }) => void
+  'server:connected': (data: { sessionId: string, accountReady: boolean, sessionAuthority?: 'server' | 'client' }) => void
 }
 
 export interface WsEventFromClient {

@@ -13,9 +13,12 @@ onMounted(() => {
 
   hideSplashScreen()
 
-  useSessionStore().init()
-  useBridge().init().then(() => {
-    useAccountStore().init()
+  const sessions = useSessionStore()
+  sessions.init()
+  void sessions.prepareServerSessions().then(() => {
+    useBridge().init().then(() => {
+      useAccountStore().init()
+    })
   })
 })
 

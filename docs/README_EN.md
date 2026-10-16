@@ -165,6 +165,7 @@ All environment variables are optional. If not provided, the default values will
 | ------------------- | ------------------------------------------------------------ | ----------------------------------------------------- |
 | `TELEGRAM_API_ID`   | From [my.telegram.org](https://my.telegram.org/apps)         | `611335`                                              |
 | `TELEGRAM_API_HASH` | From [my.telegram.org](https://my.telegram.org/apps)         | `d524b414d21f4d37f08684c1df41ac9c`                    |
+| `TG_SEARCH_SESSION_SECRET` | Random 32+ character key. Encrypts server-side GramJS sessions so any browser stays logged in after a restart. Browser-only mode ignores it. | `openssl rand -base64 32` |
 | `DATABASE_TYPE`     | Database type: `postgres` or `pglite`                        | `pglite`                                              |
 | `DATABASE_URL`      | PostgreSQL connection string (`DATABASE_TYPE=postgres` only) | `postgresql://postgres:123456@pgvector:5432/postgres` |
 | `TELEGRAM_BOT_TOKEN`| Bot token from [@BotFather](https://t.me/BotFather)          | `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`           |

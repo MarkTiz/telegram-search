@@ -19,6 +19,9 @@ import pkg from '../package.json' with { type: 'json' }
 import { getAccountContext } from './account'
 import { v1api } from './apis/v1'
 import { setupWsRoutes } from './app'
+import { readSessionSecret } from './auth-session/cipher'
+import { registerAuthSessionRoutes } from './auth-session/http'
+import { configureAuthSessionStore, restorePersistedAuthSessions } from './auth-session/service'
 import { createRemoteApi, remoteAccessFromEnv } from './remote'
 import { createRemoteApplication } from './remote-application'
 import { getDB, initDrizzle } from './storage/drizzle'
@@ -67,7 +70,9 @@ function configureServer(logger: Logger, flags: RuntimeFlags, config: Config) {
     return Response.json({ success: true })
   }))
 
-  app.mount('/v1', v1api(getDB(), models, getMediaStorage()))
+  const api = v1api(getDB(), models, getMediaStorage())
+  registerAuthSessionRoutes(api, config)
+  app.mount('/v1', api)
 
   const remoteAccess = remoteAccessFromEnv(process.env)
   if (remoteAccess) {
@@ -115,6 +120,7 @@ async function bootstrap() {
   }
 
   await initDrizzle(logger, config, flags)
+  configureAuthSessionStore(readSessionSecret(process.env))
 
   await initMediaStorage(logger, config)
 
@@ -152,6 +158,7 @@ async function bootstrap() {
 
   // Wait for the server to complete initialization and successfully bind to the port
   await server.ready()
+  await restorePersistedAuthSessions(config)
 
   logger.withFields({ port, hostname }).log('Server started')
 

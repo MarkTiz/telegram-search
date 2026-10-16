@@ -10,6 +10,8 @@ export function registerServerEventHandlers(
   registerEventHandler: ClientRegisterEventHandler,
 ) {
   registerEventHandler('server:connected', (data) => {
+    if (data.sessionAuthority === 'server')
+      useSessionStore().enableServerAuthority()
     if (data.sessionId !== useSessionStore().activeSessionId)
       return
     // server:connected carries the authoritative connection state for a

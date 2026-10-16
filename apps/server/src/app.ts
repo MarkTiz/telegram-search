@@ -26,6 +26,7 @@ import { defineWebSocketHandler, HTTPError } from 'h3'
 import { v4 as uuidv4 } from 'uuid'
 
 import { accountStates, getOrCreateAccount, peerObjects, peerToAccountId } from './account'
+import { ensureAuthSessionWatch, isAuthSessionStoreEnabled } from './auth-session/service'
 import { sendWsEvent } from './events'
 
 const WS_MODE_LABEL = 'server' as const
@@ -74,6 +75,13 @@ export function respondToReadyLogin(peer: Peer, account: AccountState): boolean 
   return true
 }
 
+export function toClientEventData<T>(eventName: keyof FromCoreEvent, data: T): T {
+  if (eventName === CoreEventType.SessionUpdate && isAuthSessionStoreEnabled()) {
+    return { session: undefined } as T
+  }
+  return data
+}
+
 export function registerCoreEventListeners(logger: Logger, account: AccountState, accountId: string, eventName: keyof FromCoreEvent) {
   if (eventName.startsWith('server:')) {
     return
@@ -81,7 +89,7 @@ export function registerCoreEventListeners(logger: Logger, account: AccountState
 
   if (!account.coreEventListeners.has(eventName)) {
     const listener: CoreEventListener = (...args: unknown[]) => {
-      const data = args[0] as WsEventToClientData<typeof eventName>
+      const data = toClientEventData(eventName, args[0] as WsEventToClientData<typeof eventName>)
       account.activePeers.forEach((peerId) => {
         const targetPeer = peerObjects.get(peerId)
         if (targetPeer) {
@@ -133,6 +141,7 @@ export function setupWsRoutes(app: H3, config: Config) {
 
       // Get or create account state (reuses existing if available)
       const account = getOrCreateAccount(accountId, config)
+      ensureAuthSessionWatch(account, accountId)
 
       // Track this peer
       peerToAccountId.set(peer.id, accountId)
@@ -142,7 +151,11 @@ export function setupWsRoutes(app: H3, config: Config) {
 
       logger.withFields({ accountId, activePeers: account.activePeers.size }).log('Peer added to account')
 
-      sendWsEvent(peer, 'server:connected', { sessionId: accountId, accountReady: account.accountReady })
+      sendWsEvent(peer, 'server:connected', {
+        sessionId: accountId,
+        accountReady: account.accountReady,
+        sessionAuthority: isAuthSessionStoreEnabled() ? 'server' : 'client',
+      })
     },
 
     async message(peer, message) {
