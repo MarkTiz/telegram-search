@@ -143,7 +143,14 @@
     "verificationCode": "验证码",
     "enterCodePlaceholder": "输入验证码",
     "passwordPlaceholder": "密码",
-    "verify": "验证"
+    "verify": "验证",
+    "qr": "扫码登录",
+    "qrDescription": "打开手机 Telegram → 设置 → 设备 → 链接桌面设备，然后扫描此二维码。",
+    "qrWaiting": "等待扫码…",
+    "qrHint": "二维码会自动刷新，请保持此页面打开直至 Telegram 确认。",
+    "usePhone": "使用手机号登录",
+    "useQr": "扫码登录",
+    "qrLogin": "扫码登录"
   },
   "loginPromptBanner": {
     "login": "去登录",

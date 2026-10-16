@@ -143,7 +143,14 @@
     "verificationCode": "Verification Code",
     "enterCodePlaceholder": "Enter code",
     "passwordPlaceholder": "Password",
-    "verify": "Verify"
+    "verify": "Verify",
+    "qr": "QR code",
+    "qrDescription": "Open Telegram on your phone → Settings → Devices → Link Desktop Device, then scan this code.",
+    "qrWaiting": "Waiting for scan…",
+    "qrHint": "The code refreshes automatically. Keep this page open until Telegram confirms.",
+    "usePhone": "Use phone number",
+    "useQr": "Scan QR code",
+    "qrLogin": "QR login"
   },
   "loginPromptBanner": {
     "login": "Login",

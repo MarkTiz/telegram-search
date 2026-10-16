@@ -91,6 +91,7 @@ describe('useAccountStore', () => {
     expect(sendEventMock).toHaveBeenCalledWith(CoreEventType.AuthLogin, {
       phoneNumber: '1234567890',
       session: 'mock-session',
+      method: 'phone',
     })
 
     submitCode('12345')
@@ -103,6 +104,19 @@ describe('useAccountStore', () => {
     logout()
     expect(sendEventMock).toHaveBeenCalledWith(CoreEventType.AuthLogout, undefined)
     expect(sessionActions.removeCurrentAccount).toHaveBeenCalled()
+  })
+
+  it('handleAuth loginWithQr sends qr method', () => {
+    const store = useAccountStore()
+    const { loginWithQr, cancelLogin } = store.handleAuth()
+
+    loginWithQr()
+    expect(sendEventMock).toHaveBeenCalledWith(CoreEventType.AuthLogin, {
+      method: 'qr',
+    })
+
+    cancelLogin()
+    expect(sendEventMock).toHaveBeenCalledWith(CoreEventType.AuthLoginCancel, undefined)
   })
 
   it('marks ready correctly', async () => {

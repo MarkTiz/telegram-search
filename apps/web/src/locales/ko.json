@@ -143,7 +143,14 @@
     "verificationCode": "인증 코드",
     "enterCodePlaceholder": "코드 입력",
     "passwordPlaceholder": "비밀번호",
-    "verify": "확인"
+    "verify": "확인",
+    "qr": "QR 코드",
+    "qrDescription": "휴대폰 Telegram → 설정 → 기기 → 데스크톱 기기 연결에서 이 코드를 스캔하세요.",
+    "qrWaiting": "스캔 대기 중…",
+    "qrHint": "코드는 자동으로 갱신됩니다. Telegram이 확인할 때까지 이 페이지를 열어 두세요.",
+    "usePhone": "전화번호로 로그인",
+    "useQr": "QR 코드 스캔",
+    "qrLogin": "QR 로그인"
   },
   "loginPromptBanner": {
     "login": "로그인",

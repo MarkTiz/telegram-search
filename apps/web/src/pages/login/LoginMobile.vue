@@ -19,7 +19,16 @@ import {
 } from './styles'
 
 const { t } = useI18n()
-const { accountStore, state, steps, handleLogin, redirectRoot } = useLoginFlow()
+const {
+  accountStore,
+  state,
+  steps,
+  qrDataUrl,
+  handleLogin,
+  switchToPhone,
+  switchToQr,
+  redirectRoot,
+} = useLoginFlow()
 </script>
 
 <template>
@@ -44,6 +53,35 @@ const { accountStore, state, steps, handleLogin, redirectRoot } = useLoginFlow()
           <p class="mt-3 text-base text-muted-foreground/80">
             {{ steps.find(s => s.value === state.currentStep)?.description }}
           </p>
+        </div>
+
+        <!-- Method switch (entry) -->
+        <div
+          v-if="state.currentStep === 'phone' || state.currentStep === 'qr'"
+          class="mb-6 grid grid-cols-2 gap-2 rounded-xl bg-muted/40 p-1"
+        >
+          <Button
+            as="button"
+            type="button"
+            size="sm"
+            :variant="state.method === 'phone' ? 'default' : 'ghost'"
+            class="rounded-lg"
+            @click="switchToPhone"
+          >
+            <span class="i-lucide-phone mr-1.5 h-4 w-4" />
+            {{ t('login.usePhone') }}
+          </Button>
+          <Button
+            as="button"
+            type="button"
+            size="sm"
+            :variant="state.method === 'qr' ? 'default' : 'ghost'"
+            class="rounded-lg"
+            @click="switchToQr"
+          >
+            <span class="i-lucide-qr-code mr-1.5 h-4 w-4" />
+            {{ t('login.useQr') }}
+          </Button>
         </div>
 
         <!-- Step Indicator -->
@@ -105,6 +143,35 @@ const { accountStore, state, steps, handleLogin, redirectRoot } = useLoginFlow()
               </Button>
             </form>
 
+            <!-- QR login -->
+            <div v-else-if="state.currentStep === 'qr'" key="qr" class="flex flex-col items-center space-y-5 text-center">
+              <div class="relative h-52 w-52 flex items-center justify-center overflow-hidden rounded-2xl border border-border/60 bg-white p-3 shadow-inner">
+                <img
+                  v-if="qrDataUrl"
+                  :src="qrDataUrl"
+                  :alt="t('login.qrLogin')"
+                  class="h-full w-full object-contain"
+                >
+                <div v-else class="flex flex-col items-center gap-3 text-muted-foreground">
+                  <span class="i-lucide-loader-2 h-8 w-8 animate-spin text-primary" />
+                  <span class="text-sm">{{ t('login.qrWaiting') }}</span>
+                </div>
+              </div>
+              <p class="max-w-sm text-sm text-muted-foreground/80">
+                {{ t('login.qrHint') }}
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                class="gap-2 text-muted-foreground hover:text-primary"
+                @click="switchToPhone"
+              >
+                <span class="i-lucide-arrow-left h-4 w-4" />
+                {{ t('login.usePhone') }}
+              </Button>
+            </div>
+
             <!-- Code Form -->
             <form v-else-if="state.currentStep === 'code'" key="code" class="space-y-8" @submit.prevent="handleLogin">
               <div class="space-y-3">
@@ -145,7 +212,7 @@ const { accountStore, state, steps, handleLogin, redirectRoot } = useLoginFlow()
                   size="sm"
                   type="button"
                   class="gap-2 text-muted-foreground hover:text-primary"
-                  @click="state.currentStep = 'phone'"
+                  @click="switchToPhone"
                 >
                   <span class="i-lucide-arrow-left h-4 w-4" />
                   {{ t('login.changePhone') }}

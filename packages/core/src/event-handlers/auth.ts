@@ -13,7 +13,11 @@ export function registerAuthEventHandlers(ctx: CoreContext, logger: Logger) {
   return (
     configuredConnectionService: ConnectionService,
   ) => {
-    ctx.emitter.on(CoreEventType.AuthLogin, async ({ phoneNumber, session }) => {
+    ctx.emitter.on(CoreEventType.AuthLogin, async ({ phoneNumber, session, method }) => {
+      if (method === 'qr') {
+        return configuredConnectionService.loginWithQrCode()
+      }
+
       if (phoneNumber) {
         return configuredConnectionService.loginWithPhone(phoneNumber)
       }
@@ -22,6 +26,11 @@ export function registerAuthEventHandlers(ctx: CoreContext, logger: Logger) {
         logger.verbose('Using client-provided session')
         return configuredConnectionService.loginWithSession(new StringSession(session))
       }
+    })
+
+    ctx.emitter.on(CoreEventType.AuthLoginCancel, async () => {
+      logger.verbose('Cancelling in-flight Telegram login')
+      await configuredConnectionService.cancelInFlightLogin()
     })
 
     ctx.emitter.on(CoreEventType.AuthLogout, async () => {

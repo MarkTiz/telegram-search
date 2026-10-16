@@ -13,10 +13,12 @@ export enum CoreEventType {
 
   AuthLogin = 'auth:login',
   AuthLogout = 'auth:logout',
+  AuthLoginCancel = 'auth:login:cancel',
   AuthCode = 'auth:code',
   AuthPassword = 'auth:password',
   AuthCodeNeeded = 'auth:code:needed',
   AuthPasswordNeeded = 'auth:password:needed',
+  AuthQrToken = 'auth:qr:token',
   AuthConnected = 'auth:connected',
   AuthDisconnected = 'auth:disconnected',
   AuthError = 'auth:error',
@@ -110,8 +112,9 @@ export interface ClientInstanceEventFromCore {
 // ============================================================================
 
 export interface ConnectionEventToCore {
-  [CoreEventType.AuthLogin]: (data: { phoneNumber?: string, session?: string }) => void
+  [CoreEventType.AuthLogin]: (data: { phoneNumber?: string, session?: string, method?: 'phone' | 'qr' }) => void
   [CoreEventType.AuthLogout]: () => void
+  [CoreEventType.AuthLoginCancel]: () => void
   [CoreEventType.AuthCode]: (data: { code: string }) => void
   [CoreEventType.AuthPassword]: (data: { password: string }) => void
 }
@@ -119,6 +122,7 @@ export interface ConnectionEventToCore {
 export interface ConnectionEventFromCore {
   [CoreEventType.AuthCodeNeeded]: () => void
   [CoreEventType.AuthPasswordNeeded]: () => void
+  [CoreEventType.AuthQrToken]: (data: { url: string, expires: number }) => void
   [CoreEventType.AuthConnected]: () => void
   [CoreEventType.AuthDisconnected]: () => void
   [CoreEventType.AuthError]: () => void

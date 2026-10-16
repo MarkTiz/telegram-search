@@ -10,6 +10,7 @@ import { Err, Ok } from '@unbird/result'
 import { Api, TelegramClient } from 'telegram'
 import { RPCError } from 'telegram/errors'
 import { ConnectionTCPObfuscated } from 'telegram/network'
+import { Buffer } from 'node:buffer'
 import { StringSession } from 'telegram/sessions'
 
 import { CoreEventType } from '../types/events'
@@ -122,6 +123,8 @@ export function createConnectionService(ctx: CoreContext, logger: Logger, option
   }
 
   let loginInFlight: Promise<Result<TelegramClient>> | undefined
+  let inflightClient: TelegramClient | undefined
+  let loginCancelRequested = false
 
   async function destroyCandidate(client: TelegramClient | undefined) {
     if (!client) {
@@ -142,10 +145,23 @@ export function createConnectionService(ctx: CoreContext, logger: Logger, option
       return loginInFlight
     }
 
+    loginCancelRequested = false
     loginInFlight = login().finally(() => {
       loginInFlight = undefined
+      inflightClient = undefined
     })
     return loginInFlight
+  }
+
+  async function cancelInFlightLogin(): Promise<void> {
+    loginCancelRequested = true
+    if (inflightClient) {
+      await destroyCandidate(inflightClient)
+    }
+  }
+
+  function toLoginTokenUrl(token: Buffer | Uint8Array): string {
+    return `tg://login?token=${Buffer.from(token).toString('base64url')}`
   }
 
   async function loginWithSession(session: StringSession | string): Promise<Result<TelegramClient>> {
@@ -155,6 +171,7 @@ export function createConnectionService(ctx: CoreContext, logger: Logger, option
 
       try {
         client = (await init(session)).expect('Failed to initialize Telegram client')
+        inflightClient = client
         await connectOrThrow(client)
 
         await client.invoke(new Api.updates.GetState())
@@ -198,6 +215,7 @@ export function createConnectionService(ctx: CoreContext, logger: Logger, option
 
       try {
         client = (await init()).expect('Failed to initialize Telegram client')
+        inflightClient = client
         await connectOrThrow(client)
 
         const isAuthorized = await client.isUserAuthorized()
@@ -230,6 +248,81 @@ export function createConnectionService(ctx: CoreContext, logger: Logger, option
         ctx.emitter.emit(CoreEventType.AuthError)
         return Err(ctx.withError(error, 'Failed to login with phone'))
       }
+    })
+  }
+
+  async function loginWithQrCode(): Promise<Result<TelegramClient>> {
+    return runLogin(async () => {
+      let client: TelegramClient | undefined
+      let retained = false
+
+      try {
+        client = (await init()).expect('Failed to initialize Telegram client')
+        inflightClient = client
+        await connectOrThrow(client)
+
+        const isAuthorized = await client.isUserAuthorized()
+        if (!isAuthorized) {
+          await signInWithQr(client)
+        }
+
+        if (loginCancelRequested) {
+          throw new Error('AUTH_USER_CANCEL')
+        }
+
+        const sessionString = String(await client.session.save())
+        logger.withFields({ hasSession: !!sessionString }).verbose('Forwarding session to client')
+
+        ctx.emitter.emit(CoreEventType.SessionUpdate, { session: sessionString })
+        ctx.setClient(client)
+        retained = true
+        ctx.emitter.emit(CoreEventType.AuthConnected)
+
+        logger.log('Login with QR successful')
+        return Ok(client)
+      }
+      catch (error) {
+        if (!retained)
+          await destroyCandidate(client)
+        ctx.emitter.emit(CoreEventType.AuthError)
+        return Err(ctx.withError(error, 'Failed to login with QR'))
+      }
+    })
+  }
+
+  async function signInWithQr(client: TelegramClient): Promise<Api.TypeUser> {
+    logger.verbose('User is not authorized, signing in with QR code')
+
+    return client.signInUserWithQrCode({
+      apiId: options.apiId,
+      apiHash: options.apiHash,
+    }, {
+      qrCode: async ({ token, expires }) => {
+        if (loginCancelRequested) {
+          throw new Error('AUTH_USER_CANCEL')
+        }
+
+        const url = toLoginTokenUrl(token)
+        logger.withFields({ expires }).verbose('Emitting QR login token')
+        ctx.emitter.emit(CoreEventType.AuthQrToken, { url, expires })
+      },
+      password: async () => {
+        if (loginCancelRequested) {
+          throw new Error('AUTH_USER_CANCEL')
+        }
+
+        logger.verbose('Waiting for password (QR login)')
+        ctx.emitter.emit(CoreEventType.AuthPasswordNeeded)
+        const { password } = await waitForEvent(ctx.emitter, CoreEventType.AuthPassword)
+        return password
+      },
+      onError: (error) => {
+        if (error?.message === 'AUTH_USER_CANCEL' || loginCancelRequested) {
+          return true
+        }
+        ctx.emitter.emit(CoreEventType.AuthError)
+        return true
+      },
     })
   }
 
@@ -278,7 +371,9 @@ export function createConnectionService(ctx: CoreContext, logger: Logger, option
 
   return {
     loginWithPhone,
+    loginWithQrCode,
     loginWithSession,
+    cancelInFlightLogin,
     logout,
   }
 }

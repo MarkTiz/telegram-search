@@ -20,6 +20,8 @@ export const useAccountStore = defineStore('account', () => {
     needCode: false,
     needPassword: false,
     isLoading: false,
+    qrUrl: '' as string,
+    qrExpires: 0 as number,
   })
 
   let attemptCounter = 0
@@ -80,10 +82,16 @@ export const useAccountStore = defineStore('account', () => {
   }
 
   function handleAuth() {
+    function clearQrState() {
+      authStatus.value.qrUrl = ''
+      authStatus.value.qrExpires = 0
+    }
+
     function login(phoneNumber: string) {
       cancelRetry()
       recoveryAllowed = true
       restoringSession = false
+      clearQrState()
       // NOTICE: session can be undefined. Phone login is a new login.
       // Server mode does not resend a stored StringSession; the server already has it.
       const session = sessionStore.serverAuthority ? undefined : sessionStore.activeSession?.session
@@ -97,7 +105,31 @@ export const useAccountStore = defineStore('account', () => {
       bridge.sendEvent(CoreEventType.AuthLogin, {
         phoneNumber,
         session,
+        method: 'phone',
       })
+    }
+
+    function loginWithQr() {
+      cancelRetry()
+      recoveryAllowed = true
+      restoringSession = false
+      clearQrState()
+      if (IS_CORE_MODE && (!TELEGRAM_APP_ID || !TELEGRAM_APP_HASH)) {
+        toast.error('Missing Telegram API credentials')
+        authStatus.value.isLoading = false
+        return
+      }
+
+      authStatus.value.isLoading = true
+      bridge.sendEvent(CoreEventType.AuthLogin, {
+        method: 'qr',
+      })
+    }
+
+    function cancelLogin() {
+      clearQrState()
+      authStatus.value.isLoading = false
+      bridge.sendEvent(CoreEventType.AuthLoginCancel, undefined)
     }
 
     function submitCode(code: string) {
@@ -135,7 +167,7 @@ export const useAccountStore = defineStore('account', () => {
       return Object.values(sessionStore.sessions)
     }
 
-    return { login, submitCode, submitPassword, logout, switchAccount, addNewAccount, getAllAccounts }
+    return { login, loginWithQr, cancelLogin, submitCode, submitPassword, logout, switchAccount, addNewAccount, getAllAccounts }
   }
 
   // --- Actions: Account Lifecycle ---

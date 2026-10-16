@@ -21,8 +21,18 @@ export function registerBasicEventHandlers(
     useAccountStore().auth.isLoading = false
   })
 
+  registerEventHandler(CoreEventType.AuthQrToken, ({ url, expires }) => {
+    const auth = useAccountStore().auth
+    auth.qrUrl = url
+    auth.qrExpires = expires
+    auth.isLoading = false
+  })
+
   registerEventHandler(CoreEventType.AuthConnected, () => {
     logger.log('Auth connected')
+    const auth = useAccountStore().auth
+    auth.qrUrl = ''
+    auth.qrExpires = 0
   })
 
   registerEventHandler(CoreEventType.AuthDisconnected, () => {
@@ -37,6 +47,9 @@ export function registerBasicEventHandlers(
   })
 
   registerEventHandler(CoreEventType.AuthError, () => {
-    useAccountStore().retryLogin()
+    const store = useAccountStore()
+    store.auth.qrUrl = ''
+    store.auth.qrExpires = 0
+    store.retryLogin()
   })
 }

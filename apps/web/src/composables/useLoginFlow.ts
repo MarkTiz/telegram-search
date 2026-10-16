@@ -5,7 +5,10 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 
-export type LoginStep = 'phone' | 'code' | 'password' | 'complete'
+import { loginTokenToQrDataUrl } from '../utils/qr'
+
+export type LoginMethod = 'phone' | 'qr'
+export type LoginStep = 'phone' | 'code' | 'password' | 'qr' | 'complete'
 
 export function useLoginFlow() {
   const { t } = useI18n()
@@ -18,6 +21,7 @@ export function useLoginFlow() {
   const { isReady } = storeToRefs(accountStore)
 
   const state = ref({
+    method: 'phone' as LoginMethod,
     currentStep: 'phone' as LoginStep,
     phoneNumber: '',
     verificationCode: '',
@@ -27,12 +31,29 @@ export function useLoginFlow() {
   accountStore.auth.needCode = false
   accountStore.auth.needPassword = false
   accountStore.auth.isLoading = false
+  accountStore.auth.qrUrl = ''
+  accountStore.auth.qrExpires = 0
 
   const {
     login,
+    loginWithQr,
+    cancelLogin,
     submitCode,
     submitPassword,
   } = accountStore.handleAuth()
+
+  const qrDataUrl = computed(() => {
+    const url = accountStore.auth.qrUrl
+    if (!url)
+      return ''
+    try {
+      return loginTokenToQrDataUrl(url)
+    }
+    catch (error) {
+      console.error('Failed to render login QR', error)
+      return ''
+    }
+  })
 
   watch(() => accountStore.auth.needCode, (value) => {
     if (value) {
@@ -45,6 +66,13 @@ export function useLoginFlow() {
     if (value) {
       accountStore.auth.isLoading = false
       state.value.currentStep = 'password'
+    }
+  })
+
+  watch(() => accountStore.auth.qrUrl, (value) => {
+    if (value && state.value.method === 'qr') {
+      accountStore.auth.isLoading = false
+      state.value.currentStep = 'qr'
     }
   })
 
@@ -61,6 +89,8 @@ export function useLoginFlow() {
       return
 
     accountStore.auth.isLoading = false
+    accountStore.auth.qrUrl = ''
+    accountStore.auth.qrExpires = 0
 
     if (activeSession.value?.me?.id) {
       avatarStore.ensureUserAvatar(activeSession.value.me.id, undefined, true)
@@ -69,12 +99,22 @@ export function useLoginFlow() {
     redirectRoot()
   }, { immediate: true })
 
-  const steps = computed(() => [
-    { step: 1, value: 'phone', title: t('login.phone'), description: t('login.phoneDescription') },
-    { step: 2, value: 'code', title: t('login.code'), description: t('login.codeDescription') },
-    { step: 3, value: 'password', title: t('login.password'), description: t('login.passwordDescription') },
-    { step: 4, value: 'complete', title: t('login.complete'), description: t('login.completeDescription') },
-  ])
+  const steps = computed(() => {
+    if (state.value.method === 'qr') {
+      return [
+        { step: 1, value: 'qr', title: t('login.qr'), description: t('login.qrDescription') },
+        { step: 2, value: 'password', title: t('login.password'), description: t('login.passwordDescription') },
+        { step: 3, value: 'complete', title: t('login.complete'), description: t('login.completeDescription') },
+      ]
+    }
+
+    return [
+      { step: 1, value: 'phone', title: t('login.phone'), description: t('login.phoneDescription') },
+      { step: 2, value: 'code', title: t('login.code'), description: t('login.codeDescription') },
+      { step: 3, value: 'password', title: t('login.password'), description: t('login.passwordDescription') },
+      { step: 4, value: 'complete', title: t('login.complete'), description: t('login.completeDescription') },
+    ]
+  })
 
   async function handleLogin() {
     accountStore.auth.isLoading = true
@@ -90,6 +130,9 @@ export function useLoginFlow() {
         case 'password':
           submitPassword(state.value.twoFactorPassword)
           break
+        case 'qr':
+          loginWithQr()
+          break
       }
     }
     catch (error) {
@@ -97,11 +140,43 @@ export function useLoginFlow() {
     }
   }
 
+  function switchToPhone() {
+    if (state.value.method === 'qr' || state.value.currentStep === 'qr') {
+      cancelLogin()
+    }
+
+    state.value.method = 'phone'
+    state.value.currentStep = 'phone'
+    accountStore.auth.needCode = false
+    accountStore.auth.needPassword = false
+    accountStore.auth.isLoading = false
+    accountStore.auth.qrUrl = ''
+    accountStore.auth.qrExpires = 0
+  }
+
+  function switchToQr() {
+    if (state.value.method === 'phone' && accountStore.auth.isLoading) {
+      cancelLogin()
+    }
+
+    state.value.method = 'qr'
+    state.value.currentStep = 'qr'
+    accountStore.auth.needCode = false
+    accountStore.auth.needPassword = false
+    accountStore.auth.qrUrl = ''
+    accountStore.auth.qrExpires = 0
+    accountStore.auth.isLoading = true
+    loginWithQr()
+  }
+
   return {
     accountStore,
     state,
     steps,
+    qrDataUrl,
     handleLogin,
+    switchToPhone,
+    switchToQr,
     redirectRoot,
   }
 }
