@@ -78,3 +78,22 @@ describe('server auth session authority', () => {
     expect(store.activeSession?.session).toBe('local-session-secret')
   })
 })
+
+  it('exposes hasActivePersistedAuth from the server catalog before websocket ready', async () => {
+    const store = useSessionStore()
+    store.init()
+    expect(store.hasActivePersistedAuth).toBe(false)
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      authority: 'server',
+      sessions: [{ id: 'bomb', displayName: 'Bomb', telegramUserId: '6061287992' }],
+    }))))
+
+    await store.prepareServerSessions()
+
+    expect(store.serverAuthority).toBe(true)
+    expect(store.hasActivePersistedAuth).toBe(true)
+
+    store.addNewAccount()
+    expect(store.hasActivePersistedAuth).toBe(false)
+  })

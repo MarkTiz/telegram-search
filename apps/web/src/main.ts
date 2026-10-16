@@ -27,61 +27,72 @@ import './styles/main.css'
 initPosthog()
 initLogger(LOG_LEVEL, LoggerFormat.Pretty)
 
-const app = createApp(App)
+async function bootstrap() {
+  const app = createApp(App)
 
-const pinia = createPinia()
-app.use(pinia)
+  const pinia = createPinia()
+  app.use(pinia)
 
-const sessionStore = useSessionStore()
-sessionStore.init()
+  const sessionStore = useSessionStore()
+  sessionStore.init()
+  // Resolve server catalog before the first navigation so returning users with
+  // persisted server sessions never flash the Telegram Login / success screen.
+  await sessionStore.prepareServerSessions()
 
-const routes = setupLayouts([
-  ...generatedRoutes.filter(_ => true),
-  {
-    path: '/search/:pathMatch(.*)*',
-    redirect: '/chats',
-  },
-])
-const router = createRouter({
-  routes,
-  history: createWebHistory(import.meta.env.BASE_URL),
-})
+  const routes = setupLayouts([
+    ...generatedRoutes.filter(_ => true),
+    {
+      path: '/search/:pathMatch(.*)*',
+      redirect: '/chats',
+    },
+  ])
+  const router = createRouter({
+    routes,
+    history: createWebHistory(import.meta.env.BASE_URL),
+  })
 
-// Configure NProgress
-NProgress.configure({ showSpinner: false })
+  // Configure NProgress
+  NProgress.configure({ showSpinner: false })
 
-// Add router navigation guards for NProgress
-router.beforeEach((to) => {
-  NProgress.start()
+  // Add router navigation guards for NProgress
+  router.beforeEach((to) => {
+    NProgress.start()
 
-  const accountStore = useAccountStore()
-  const isLoginRoute = to.path === '/login'
-  const hasValidLogin = accountStore.isReady
+    const accountStore = useAccountStore()
+    const isLoginRoute = to.path === '/login'
+    // isReady waits for websocket AccountReady; hasActivePersistedAuth covers
+    // server-catalog / local StringSession so we do not bounce to /login first.
+    // addNewAccount() clears me/session on the active slot, so /login stays reachable.
+    const hasValidLogin = accountStore.isReady || sessionStore.hasActivePersistedAuth
 
-  if (!isLoginRoute && !hasValidLogin) {
-    return {
-      path: '/login',
-      query: { redirect: to.fullPath },
+    if (!isLoginRoute && !hasValidLogin) {
+      return {
+        path: '/login',
+        query: { redirect: to.fullPath },
+      }
     }
-  }
-  if (isLoginRoute && hasValidLogin) {
-    return '/'
-  }
-  return true
-})
+    if (isLoginRoute && hasValidLogin) {
+      const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/'
+      return redirect
+    }
+    return true
+  })
 
-router.afterEach(() => {
-  NProgress.done()
-})
+  router.afterEach(() => {
+    NProgress.done()
+  })
 
-router.onError(() => {
-  NProgress.done()
-})
+  router.onError(() => {
+    NProgress.done()
+  })
 
-app.use(i18n)
-app.use(router)
-app.use(VueQueryPlugin)
-app.use(autoAnimatePlugin)
-app.use(createPGliteDevtoolsPlugin())
+  app.use(i18n)
+  app.use(router)
+  app.use(VueQueryPlugin)
+  app.use(autoAnimatePlugin)
+  app.use(createPGliteDevtoolsPlugin())
 
-app.mount('#app')
+  app.mount('#app')
+}
+
+void bootstrap()
