@@ -404,6 +404,7 @@
     "userWithId": "用户 {id}"
   },
   "virtualMessageList": {
-    "scrolling": "加载中"
+    "scrolling": "加载中",
+    "jumpToLatest": "跳到最新消息"
   }
 }

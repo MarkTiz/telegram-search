@@ -12,6 +12,8 @@ interface Props {
   messages: CoreMessage[]
   onScrollToTop?: () => LoadStatus | Promise<LoadStatus>
   onScrollToBottom?: () => LoadStatus | Promise<LoadStatus>
+  /** Reload/jump to the chat's newest messages before scrolling. */
+  onJumpToLatest?: () => void | Promise<void>
   autoScrollToBottom?: boolean
   debug?: boolean
 }
@@ -347,6 +349,22 @@ async function scrollToBottom() {
   }
 }
 
+async function handleJumpToLatestClick() {
+  // Parent may reset the in-memory window back to the newest local page
+  // (archive mode can evict latest messages while loading older history).
+  if (props.onJumpToLatest) {
+    try {
+      await Promise.resolve(props.onJumpToLatest())
+    }
+    catch (error) {
+      debugLog('jump-to-latest-failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+  await scrollToBottom()
+}
+
 async function scrollToMessage(messageId: string | number) {
   await nextTick()
   const el = scrollContainerRef.value
@@ -419,8 +437,11 @@ defineExpose({
     >
       <button
         v-if="!isAtBottom && !isScrolling"
-        class="absolute bottom-6 right-6 h-12 w-12 flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl transition-all hover:scale-110 hover:shadow-2xl"
-        @click="scrollToBottom"
+        type="button"
+        class="absolute bottom-24 right-6 z-30 h-12 w-12 flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl transition-all hover:scale-110 hover:shadow-2xl md:bottom-6"
+        :aria-label="t('virtualMessageList.jumpToLatest')"
+        :title="t('virtualMessageList.jumpToLatest')"
+        @click="handleJumpToLatestClick"
       >
         <i class="i-lucide-chevron-down h-5 w-5" />
       </button>

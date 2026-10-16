@@ -404,6 +404,7 @@
     "userWithId": "사용자 {id}"
   },
   "virtualMessageList": {
-    "scrolling": "불러오는 중..."
+    "scrolling": "불러오는 중...",
+    "jumpToLatest": "최신 메시지로 이동"
   }
 }

@@ -142,6 +142,15 @@ async function loadNewerMessages(): Promise<'fetched' | 'skipped'> {
   }
 }
 
+// Jump to the chat's newest local messages. Archive/local-only mode keeps a
+// bounded in-memory window, so scrolling to the DOM bottom after loading older
+// history is not enough — reset and reload the latest page first.
+async function jumpToLatest() {
+  isContextMode.value = false
+  messageStore.replaceMessages([], { chatId: id.toString(), limit: messageWindowSize })
+  await loadOlderMessages()
+}
+
 function sendMessage() {
   if (!messageInput.value.trim())
     return
@@ -316,14 +325,17 @@ watch(
         :messages="sortedMessageArray"
         :on-scroll-to-top="loadOlderMessages"
         :on-scroll-to-bottom="loadNewerMessages"
+        :on-jump-to-latest="jumpToLatest"
         :auto-scroll-to-bottom="!isContextMode"
         :debug="debugMode"
       />
     </div>
 
     <!-- Message Input -->
-    <div class="absolute bottom-6 left-0 right-0 z-20 px-4 md:bottom-6 md:px-6">
-      <div class="mx-auto max-w-4xl flex items-end gap-3 border border-border/65 rounded-2xl bg-background/90 p-2 shadow-sm backdrop-blur-xl transition-all duration-200 focus-within:border-primary/35 hover:border-border focus-within:bg-background hover:bg-background focus-within:ring-2 focus-within:ring-primary/15">
+    <!-- pointer-events-none on the full-width wrapper so the jump-to-latest
+         button under the transparent side gutters stays clickable. -->
+    <div class="pointer-events-none absolute bottom-6 left-0 right-0 z-20 px-4 md:bottom-6 md:px-6">
+      <div class="pointer-events-auto mx-auto max-w-4xl flex items-end gap-3 border border-border/65 rounded-2xl bg-background/90 p-2 shadow-sm backdrop-blur-xl transition-all duration-200 focus-within:border-primary/35 hover:border-border focus-within:bg-background hover:bg-background focus-within:ring-2 focus-within:ring-primary/15">
         <!-- Input container with modern design -->
         <div class="relative flex flex-1 items-center">
           <div class="absolute left-2 flex items-center gap-2">

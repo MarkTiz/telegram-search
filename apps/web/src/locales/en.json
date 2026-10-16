@@ -404,6 +404,7 @@
     "userWithId": "User {id}"
   },
   "virtualMessageList": {
-    "scrolling": "Loading..."
+    "scrolling": "Loading...",
+    "jumpToLatest": "Jump to latest"
   }
 }
