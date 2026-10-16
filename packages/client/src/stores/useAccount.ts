@@ -51,7 +51,10 @@ export const useAccountStore = defineStore('account', () => {
       return
 
     if (!sessionStore.activeSession?.session) {
-      logger.verbose('No session, skipping login')
+      if (sessionStore.serverAuthority)
+        logger.verbose('Waiting for the server Telegram session')
+      else
+        logger.verbose('No session, skipping login')
       return
     }
 
@@ -81,8 +84,9 @@ export const useAccountStore = defineStore('account', () => {
       cancelRetry()
       recoveryAllowed = true
       restoringSession = false
-      // NOTICE: session cloud be undefined, we determine it login with phone number as new login
-      const session = sessionStore.activeSession?.session
+      // NOTICE: session can be undefined. Phone login is a new login.
+      // Server mode does not resend a stored StringSession; the server already has it.
+      const session = sessionStore.serverAuthority ? undefined : sessionStore.activeSession?.session
       if (IS_CORE_MODE && (!TELEGRAM_APP_ID || !TELEGRAM_APP_HASH)) {
         toast.error('Missing Telegram API credentials')
         authStatus.value.isLoading = false

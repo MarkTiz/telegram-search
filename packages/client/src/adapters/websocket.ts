@@ -12,7 +12,7 @@ import type { ClientEventHandlerMap, ClientEventHandlerQueueMap } from '../event
 import { useLogger } from '@guiiai/logg'
 import { useEventListener, useWebSocket } from '@vueuse/core'
 import { acceptHMRUpdate, defineStore, storeToRefs } from 'pinia'
-import { computed, onScopeDispose } from 'vue'
+import { computed, onScopeDispose, watch } from 'vue'
 import { toast } from 'vue-sonner'
 
 import { WS_API_BASE } from '../constants'
@@ -21,6 +21,7 @@ import { registerAllEventHandlers } from '../event-handlers/register'
 import { useAccountStore } from '../stores/useAccount'
 import { useSessionStore } from '../stores/useSession'
 import { drainEventQueue, enqueueEventHandler } from '../utils/event-queue'
+import { redactEventData } from '../utils/redact-event'
 import { createWebSocketApplicationBridge } from './eventa-websocket'
 
 export type ClientSendEventFn = <T extends keyof WsEventToServer>(event: T, data?: WsEventToServerData<T>) => void
@@ -29,7 +30,7 @@ export type ClientCreateWsMessageFn = <T extends keyof WsEventToServer>(event: T
 // Renamed to 'adapter' to signify it's not the main store anymore
 export const useWebsocketAdapter = defineStore('websocket-adapter', () => {
   const sessionStore = useSessionStore()
-  const { activeSessionId } = storeToRefs(sessionStore)
+  const { activeSessionId, transportReady } = storeToRefs(sessionStore)
   const logger = useLogger('WebSocket')
   let disposed = false
 
@@ -37,8 +38,8 @@ export const useWebsocketAdapter = defineStore('websocket-adapter', () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.host
     const sessionId = activeSessionId.value
-    // Don't connect if no session ID
-    if (!sessionId)
+    // Wait until server-mode session hydration finishes, and don't connect without an id.
+    if (!transportReady.value || !sessionId)
       return undefined
     return `${protocol}//${host}${WS_API_BASE}?sessionId=${sessionId}`
   })
@@ -55,7 +56,7 @@ export const useWebsocketAdapter = defineStore('websocket-adapter', () => {
 
   function sendEvent<T extends keyof WsEventToServer>(event: T, data?: WsEventToServerData<T>) {
     if (event !== 'server:event:register')
-      logger.debug('Sending event', event, data)
+      logger.debug('Sending event', event, redactEventData(data))
 
     if (!wsSocket.send(JSON.stringify(createWsMessage(event, data)), false))
       throw new Error('WebSocket is not connected')
@@ -89,8 +90,12 @@ export const useWebsocketAdapter = defineStore('websocket-adapter', () => {
       if (!disposed && socket === wsSocket.ws.value && wsSocket.status.value === 'OPEN')
         handleMessage(event.data)
     },
-    // Only connect when URL is defined
-    immediate: !!wsUrlComputed.value,
+    // Connect immediately when hydration already finished; otherwise the watch below opens it.
+    immediate: transportReady.value && !!activeSessionId.value,
+  })
+  watch(transportReady, (ready) => {
+    if (ready && wsUrlComputed.value && wsSocket.status.value !== 'OPEN')
+      wsSocket.open()
   })
   const application = createWebSocketApplicationBridge(() => wsSocket.ws.value)
   onScopeDispose(() => {
@@ -129,7 +134,7 @@ export const useWebsocketAdapter = defineStore('websocket-adapter', () => {
     try {
       const message = JSON.parse(rawMessage) as WsMessageToClient
       if (eventHandlers.has(message.type)) {
-        logger.debug('Message received', message)
+        logger.debug('Message received', { ...message, data: redactEventData(message.data) })
       }
       if (eventHandlers.has(message.type)) {
         const fn = eventHandlers.get(message.type)

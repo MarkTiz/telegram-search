@@ -181,6 +181,7 @@ docker run -d --name telegram-search -p 3333:3333 ghcr.io/groupultra/telegram-se
 | ------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `TELEGRAM_API_ID`   | 从 [my.telegram.org](https://my.telegram.org/apps) 获取的 Telegram 应用 ID   | `611335`                                              |
 | `TELEGRAM_API_HASH` | 从 [my.telegram.org](https://my.telegram.org/apps) 获取的 Telegram 应用 Hash | `d524b414d21f4d37f08684c1df41ac9c`                    |
+| `TG_SEARCH_SESSION_SECRET` | 至少 32 位的随机密钥。服务器模式用它加密 GramJS 登录会话，重启后任意浏览器无需再次登录。仅浏览器模式会忽略它。 | `openssl rand -base64 32` |
 | `DATABASE_TYPE`     | 数据库类型，可选 `postgres` 或 `pglite`                                      | `pglite`                                              |
 | `DATABASE_URL`      | PostgreSQL 连接字符串（仅在 `DATABASE_TYPE=postgres` 时填写）                | `postgresql://postgres:123456@pgvector:5432/postgres` |
 | `TELEGRAM_BOT_TOKEN`| 通过 [@BotFather](https://t.me/BotFather) 创建的 Telegram Bot Token          | `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`           |

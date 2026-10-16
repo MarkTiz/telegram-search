@@ -30,12 +30,10 @@ export function registerBasicEventHandlers(
     useAccountStore().stopRecovery()
   })
 
-  // Core forwards updated StringSession to the client; let bridge store decide
-  // whether to update current account or create a new slot (add-account flow).
+  // Browser mode keeps the StringSession locally. Server mode persists it in the
+  // database, so the forwarded value must not become the client authority.
   registerEventHandler(CoreEventType.SessionUpdate, ({ session: sessionString }) => {
-    if (useSessionStore().activeSession) {
-      useSessionStore().activeSession!.session = sessionString
-    }
+    useSessionStore().applySessionUpdate(sessionString)
   })
 
   registerEventHandler(CoreEventType.AuthError, () => {

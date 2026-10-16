@@ -16,6 +16,7 @@ import { getRegisterEventHandler } from '../event-handlers'
 import { registerAllEventHandlers } from '../event-handlers/register'
 import { useSessionStore } from '../stores/useSession'
 import { drainEventQueue, enqueueEventHandler } from '../utils/event-queue'
+import { redactEventData } from '../utils/redact-event'
 import { initDB } from './core-db'
 import { createCoreRuntime } from './core-runtime'
 import { createLocalApplicationBridge } from './eventa-local'
@@ -81,7 +82,7 @@ export function createCoreBridgeAdapter(createRuntime = createCoreRuntime) {
     if (disposed || (switching && event !== 'server:event:register'))
       throw new Error('Core account is switching or disposed')
     const ctx = ensureCtx()!
-    logger.withFields({ event, data }).debug('Receive event from client')
+    logger.withFields({ event, data: redactEventData(data) }).debug('Receive event from client')
 
     try {
       if (event === 'server:event:register') {
@@ -104,7 +105,7 @@ export function createCoreBridgeAdapter(createRuntime = createCoreRuntime) {
         }
       }
       else {
-        logger.withFields({ event, data }).debug('Emit event to core')
+        logger.withFields({ event, data: redactEventData(data) }).debug('Emit event to core')
         ctx.emitter.emit(event, deepClone(data) as ExtractData<keyof ToCoreEvent>)
       }
     }

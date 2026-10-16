@@ -1,7 +1,8 @@
 import { CoreEventType } from '@tg-search/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { isEventaFrame, respondToReadyLogin } from './app'
+import { isEventaFrame, respondToReadyLogin, toClientEventData } from './app'
+import { configureAuthSessionStore, resetAuthSessionStoreForTests } from './auth-session/service'
 
 const sendWsEvent = vi.hoisted(() => vi.fn())
 
@@ -29,6 +30,18 @@ describe('respondToReadyLogin', () => {
 
     expect(respondToReadyLogin(peer, account)).toBe(false)
     expect(sendWsEvent).not.toHaveBeenCalled()
+  })
+})
+
+describe('toClientEventData', () => {
+  it('forwards a session string only while the server store is disabled', () => {
+    resetAuthSessionStoreForTests()
+    expect(toClientEventData(CoreEventType.SessionUpdate, { session: 'kept-locally' })).toEqual({ session: 'kept-locally' })
+
+    configureAuthSessionStore('d'.repeat(32))
+    expect(toClientEventData(CoreEventType.SessionUpdate, { session: 'kept-locally' })).toEqual({ session: undefined })
+    expect(toClientEventData(CoreEventType.AuthConnected, undefined)).toBeUndefined()
+    resetAuthSessionStoreForTests()
   })
 })
 
