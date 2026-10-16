@@ -1,3 +1,4 @@
+export { API_BASE, WS_API_BASE } from './constants'
 export { usePGliteDevDb } from './adapters/core-db'
 export { hydrateMediaBlobWithCore } from './adapters/core-media'
 export { getMediaBinaryProvider } from './adapters/core-media-opfs'

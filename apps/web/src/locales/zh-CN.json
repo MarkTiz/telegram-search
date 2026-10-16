@@ -46,7 +46,24 @@
     "total": "总计",
     "tokens": "tokens",
     "input": "输入",
-    "output": "输出"
+    "output": "输出",
+    "tabChat": "对话",
+    "tabLlmConfig": "大模型配置",
+    "agentApiTitle": "对外 Agent 接口",
+    "agentApiDescription": "为 Skills / 其他 Agent 提供免鉴权 HTTP API（内网使用）。仅可查询下方勾选的会话（须先在同步白名单中启用）。",
+    "agentApiLoading": "加载配置中…",
+    "agentApiLoadFailed": "加载 Agent 接口配置失败",
+    "agentApiSaveFailed": "保存 Agent 接口配置失败",
+    "agentApiSaved": "Agent 接口配置已保存",
+    "agentApiEnable": "启用对外接口",
+    "agentApiEnableHint": "关闭后所有 /api/agent/* 工具接口将返回 403。",
+    "agentApiSelectedCount": "已选 {count} 个会话可被 Agent 查询",
+    "agentApiEmptyHint": "白名单为空时接口将返回空结果",
+    "agentApiNoAccounts": "暂无账号",
+    "agentApiAccountSelected": "{count}/{total}",
+    "agentApiNoWhitelistChats": "该账号同步白名单为空，请先在「同步」页启用会话",
+    "agentApiReload": "重新加载",
+    "agentApiSave": "保存"
   },
   "base": {
     "toaster": {

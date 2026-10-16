@@ -13,6 +13,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 
+import AgentApiConfigPanel from '../components/AgentApiConfigPanel.vue'
 import ChatSelector from '../components/ChatSelector.vue'
 import PhotoSearchResults from '../components/PhotoSearchResults.vue'
 
@@ -54,6 +55,7 @@ const { chats } = storeToRefs(chatStore)
 /** AI scope picker: only whitelist-enabled chats (empty whitelist => empty). */
 const whitelistedChats = computed(() => filterChatsByWhitelist(chats.value || [], accountSettings.value))
 
+const activeTab = ref<'chat' | 'llmConfig'>('chat')
 const isScopeSelectorOpen = ref(false)
 const selectedChatIds = ref<number[]>([])
 const tempSelectedChatIds = ref<number[]>([])
@@ -374,9 +376,27 @@ onMounted(() => {
         <h1 class="text-lg font-semibold">
           {{ t('aiChat.aiChat') }}
         </h1>
+        <div class="ml-2 flex items-center gap-1 rounded-full bg-muted/60 p-1">
+          <button
+            type="button"
+            class="rounded-full px-3 py-1 text-xs font-medium transition-colors"
+            :class="activeTab === 'chat' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeTab = 'chat'"
+          >
+            {{ t('aiChat.tabChat') }}
+          </button>
+          <button
+            type="button"
+            class="rounded-full px-3 py-1 text-xs font-medium transition-colors"
+            :class="activeTab === 'llmConfig' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
+            @click="activeTab = 'llmConfig'"
+          >
+            {{ t('aiChat.tabLlmConfig') }}
+          </button>
+        </div>
       </div>
 
-      <div class="flex items-center gap-2">
+      <div v-if="activeTab === 'chat'" class="flex items-center gap-2">
         <Button
           variant="ghost"
           class="h-9 gap-2 rounded-full px-3"
@@ -394,8 +414,14 @@ onMounted(() => {
       </div>
     </header>
 
+    <!-- LLM / Agent API config tab -->
+    <div v-if="activeTab === 'llmConfig'" class="min-h-0 flex-1 overflow-hidden">
+      <AgentApiConfigPanel />
+    </div>
+
     <!-- Chat Messages Area -->
     <div
+      v-else
       ref="messagesContainer"
       class="flex-1 overflow-y-auto scroll-smooth p-4"
     >
@@ -649,7 +675,7 @@ onMounted(() => {
     </div>
 
     <!-- Input Area -->
-    <div class="border-t bg-card/50 p-4 backdrop-blur-sm">
+    <div v-if="activeTab === 'chat'" class="border-t bg-card/50 p-4 backdrop-blur-sm">
       <div class="mx-auto max-w-4xl">
         <div class="flex items-end gap-2">
           <Textarea

@@ -46,7 +46,24 @@
     "total": "Total",
     "tokens": "tokens",
     "input": "Input",
-    "output": "Output"
+    "output": "Output",
+    "tabChat": "Chat",
+    "tabLlmConfig": "LLM Config",
+    "agentApiTitle": "Public Agent API",
+    "agentApiDescription": "Unauthenticated HTTP API for Skills / other agents (intranet). Only chats checked below are queryable (must first be on the sync whitelist).",
+    "agentApiLoading": "Loading config…",
+    "agentApiLoadFailed": "Failed to load Agent API config",
+    "agentApiSaveFailed": "Failed to save Agent API config",
+    "agentApiSaved": "Agent API config saved",
+    "agentApiEnable": "Enable public API",
+    "agentApiEnableHint": "When off, all /api/agent/* tool endpoints return 403.",
+    "agentApiSelectedCount": "{count} chats open to Agent queries",
+    "agentApiEmptyHint": "Empty allowlist returns empty results",
+    "agentApiNoAccounts": "No accounts",
+    "agentApiAccountSelected": "{count}/{total}",
+    "agentApiNoWhitelistChats": "This account has an empty sync whitelist — enable chats on the Sync page first",
+    "agentApiReload": "Reload",
+    "agentApiSave": "Save"
   },
   "base": {
     "toaster": {

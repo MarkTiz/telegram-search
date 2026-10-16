@@ -46,7 +46,24 @@
     "total": "합계",
     "tokens": "토큰",
     "input": "입력",
-    "output": "출력"
+    "output": "출력",
+    "tabChat": "채팅",
+    "tabLlmConfig": "LLM 설정",
+    "agentApiTitle": "공개 Agent API",
+    "agentApiDescription": "Skills / 다른 Agent용 인증 없는 HTTP API(인트라넷). 아래에서 선택한 채팅만 조회 가능합니다(동기화 화이트리스트에 먼저 있어야 함).",
+    "agentApiLoading": "설정 로딩 중…",
+    "agentApiLoadFailed": "Agent API 설정을 불러오지 못했습니다",
+    "agentApiSaveFailed": "Agent API 설정을 저장하지 못했습니다",
+    "agentApiSaved": "Agent API 설정이 저장되었습니다",
+    "agentApiEnable": "공개 API 사용",
+    "agentApiEnableHint": "끄면 모든 /api/agent/* 도구 엔드포인트가 403을 반환합니다.",
+    "agentApiSelectedCount": "Agent가 조회할 수 있는 채팅 {count}개",
+    "agentApiEmptyHint": "허용 목록이 비어 있으면 빈 결과가 반환됩니다",
+    "agentApiNoAccounts": "계정 없음",
+    "agentApiAccountSelected": "{count}/{total}",
+    "agentApiNoWhitelistChats": "이 계정의 동기화 화이트리스트가 비어 있습니다. 동기화 페이지에서 먼저 채팅을 활성화하세요",
+    "agentApiReload": "다시 로드",
+    "agentApiSave": "저장"
   },
   "base": {
     "toaster": {

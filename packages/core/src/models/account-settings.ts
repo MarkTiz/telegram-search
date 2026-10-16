@@ -8,7 +8,7 @@ import { safeParse } from 'valibot'
 
 import { accountsTable } from '../schemas/accounts'
 import { accountSettingsSchema } from '../types/account-settings'
-import { generateDefaultAccountSettings } from '../utils/account-settings'
+import { generateDefaultAccountSettings, normalizeAccountSettings } from '../utils/account-settings'
 import { withResult } from '../utils/result'
 import { must0 } from './utils/must'
 
@@ -25,10 +25,12 @@ async function updateAccountSettings(
     throw new Error('Invalid settings', { cause: parsedSettings.issues })
   }
 
+  const normalized = normalizeAccountSettings(parsedSettings.output)
+
   // Only update the "settings" column (which is a JSONB), not the root row fields
   const updatedRows = await db
     .update(accountsTable)
-    .set({ settings: parsedSettings.output })
+    .set({ settings: normalized })
     .where(eq(accountsTable.id, accountId))
     .returning()
 
@@ -49,7 +51,7 @@ async function fetchSettingsByAccountId(db: CoreDB, accountId: string): PromiseR
     if (result.length > 0 && result[0].settings) {
       const parsedSettings = safeParse(accountSettingsSchema, result[0].settings)
       if (parsedSettings.success) {
-        return parsedSettings.output
+        return normalizeAccountSettings(parsedSettings.output)
       }
     }
 
@@ -57,9 +59,44 @@ async function fetchSettingsByAccountId(db: CoreDB, accountId: string): PromiseR
   })
 }
 
+export interface AccountWithSettings {
+  id: string
+  platform: string
+  platformUserId: string
+  settings: AccountSettings
+}
+
+/**
+ * List every account with normalized settings (for cross-account agent API).
+ */
+async function listAllAccountsWithSettings(db: CoreDB): PromiseResult<AccountWithSettings[]> {
+  return withResult(async () => {
+    const rows = await db
+      .select({
+        id: accountsTable.id,
+        platform: accountsTable.platform,
+        platformUserId: accountsTable.platform_user_id,
+        settings: accountsTable.settings,
+      })
+      .from(accountsTable)
+
+    return rows.map((row) => {
+      const parsed = safeParse(accountSettingsSchema, row.settings ?? {})
+      const settings = normalizeAccountSettings(parsed.success ? parsed.output : generateDefaultAccountSettings())
+      return {
+        id: row.id,
+        platform: row.platform,
+        platformUserId: row.platformUserId,
+        settings,
+      }
+    })
+  })
+}
+
 export const accountSettingsModels = {
   updateAccountSettings,
   fetchSettingsByAccountId,
+  listAllAccountsWithSettings,
 }
 
 export type AccountSettingsModels = typeof accountSettingsModels

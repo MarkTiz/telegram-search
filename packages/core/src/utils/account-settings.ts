@@ -65,6 +65,14 @@ export function normalizeAccountSettings(settings: AccountSettings): AccountSett
   normalized.receiveMessages = normalized.messageProcessing.receiveMessages
   normalized.resolvers = normalized.messageProcessing.resolvers
 
+  const whitelist = new Set((normalized.messageProcessing?.whitelistChatIds ?? []).map(String))
+  const rawAgentChatIds = normalized.agentApi?.chatIds ?? []
+  const prunedAgentChatIds = rawAgentChatIds.map(String).filter(id => whitelist.has(id))
+  normalized.agentApi = {
+    enabled: normalized.agentApi?.enabled ?? false,
+    chatIds: prunedAgentChatIds,
+  }
+
   return normalized
 }
 
@@ -85,3 +93,24 @@ export function isChatAllowedBySyncWhitelist(settings: AccountSettings, chatId: 
   return whitelist.includes(String(chatId))
 }
 
+
+/**
+ * Chat IDs allowed for the public agent HTTP API (subset of sync whitelist).
+ * Empty = no chats (strict), same spirit as sync whitelist.
+ */
+export function getAgentApiChatIds(settings: AccountSettings): string[] {
+  return settings.agentApi?.chatIds ?? []
+}
+
+export function isAgentApiEnabled(settings: AccountSettings): boolean {
+  return settings.agentApi?.enabled === true
+}
+
+export function isChatAllowedByAgentApi(settings: AccountSettings, chatId: string | number | undefined | null): boolean {
+  if (chatId == null || chatId === '')
+    return false
+  const allowlist = getAgentApiChatIds(settings)
+  if (allowlist.length === 0)
+    return false
+  return allowlist.includes(String(chatId))
+}

@@ -17,6 +17,7 @@ import { defineEventHandler, H3, serve } from 'h3'
 import pkg from '../package.json' with { type: 'json' }
 
 import { getAccountContext } from './account'
+import { agentApi } from './apis/agent'
 import { v1api } from './apis/v1'
 import { setupWsRoutes } from './app'
 import { readSessionSecret } from './auth-session/cipher'
@@ -73,6 +74,9 @@ function configureServer(logger: Logger, flags: RuntimeFlags, config: Config) {
   const api = v1api(getDB(), models, getMediaStorage())
   registerAuthSessionRoutes(api, config)
   app.mount('/v1', api)
+
+  // Public agent HTTP API (no auth). Clients reach it as /api/agent/* via nginx.
+  app.mount('/agent', agentApi(getDB(), models))
 
   const remoteAccess = remoteAccessFromEnv(process.env)
   if (remoteAccess) {

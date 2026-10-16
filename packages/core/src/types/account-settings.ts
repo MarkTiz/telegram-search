@@ -68,6 +68,14 @@ export const botConfigSchema = object({
   lastSearchChatId: optional(string()), // Remember last selected chat for search
 })
 
+/** Public agent HTTP API allowlist (subset of sync whitelist). */
+export const agentApiConfigSchema = object({
+  /** Mirrored across accounts by the config UI; API is on if any account has enabled=true. */
+  enabled: optional(boolean(), false),
+  /** Chat IDs queryable via /api/agent/* for this account. */
+  chatIds: optional(array(string()), []),
+})
+
 export const accountSettingsSchema = object({
   embedding: optional(embeddingConfigSchema, {}),
   llm: optional(llmConfigSchema, {}),
@@ -76,9 +84,11 @@ export const accountSettingsSchema = object({
   receiveMessages: optional(receiveMessagesConfigSchema, {}),
   bot: optional(botConfigSchema, {}),
   messageProcessing: optional(messageProcessingSchema, {}),
+  agentApi: optional(agentApiConfigSchema, {}),
 })
 
 export type EmbeddingConfig = InferOutput<typeof embeddingConfigSchema>
 export type LLMConfig = InferOutput<typeof llmConfigSchema>
 export type VisionLLMConfig = InferOutput<typeof visionLLMConfigSchema>
 export type AccountSettings = InferOutput<typeof accountSettingsSchema>
+export type AgentApiConfig = InferOutput<typeof agentApiConfigSchema>
