@@ -2,10 +2,12 @@
 import type { CoreChatFolder, CoreDialog } from '@tg-search/core/types'
 
 import { VList } from 'virtua/vue'
-import { computed, ref, watchEffect } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import EntityAvatar from './avatar/EntityAvatar.vue'
+
+import { filterFoldersByChats, matchesFolder } from '../utils/chat-list'
 
 import { Input } from './ui/Input'
 
@@ -29,20 +31,21 @@ const activeChatId = defineModel<number | null>('activeChatId', {
   default: null,
 })
 
-// Build filter options based on folders
+/** Folder filters: only folders that intersect the provided chats (caller passes whitelist-filtered list on Sync/AI). */
+const visibleFolders = computed(() => filterFoldersByChats(props.folders ?? [], props.chats ?? []))
+
+// Build filter options based on folders that still have chats
 const filterOptions = computed(() => {
   void locale.value // Depend on locale
   const options = [
     { label: t('chatGroups.all'), value: 'all' },
   ]
 
-  if (props.folders) {
-    for (const folder of props.folders) {
-      options.push({
-        label: folder.title,
-        value: `folder:${folder.id}`,
-      })
-    }
+  for (const folder of visibleFolders.value) {
+    options.push({
+      label: folder.title,
+      value: `folder:${folder.id}`,
+    })
   }
 
   return options
@@ -50,6 +53,16 @@ const filterOptions = computed(() => {
 
 const selectedFilter = ref<string>('all')
 const searchQuery = ref('')
+
+watch(visibleFolders, (list) => {
+  if (!selectedFilter.value.startsWith('folder:')) {
+    return
+  }
+  const folderId = Number(selectedFilter.value.split(':')[1])
+  if (!list.some(folder => Number(folder.id) === folderId)) {
+    selectedFilter.value = 'all'
+  }
+})
 
 /**
  * Performance optimization: Use Set for O(1) lookup instead of O(N) array.includes()
@@ -63,9 +76,12 @@ const filteredChats = computed(() => {
   if (selectedFilter.value !== 'all') {
     if (selectedFilter.value.startsWith('folder:')) {
       const folderId = Number(selectedFilter.value.split(':')[1])
-      const folder = props.folders?.find(f => f.id === folderId)
+      const folder = visibleFolders.value.find(f => f.id === folderId)
       if (folder) {
-        filtered = filtered.filter(chat => chat.folderIds?.includes(folderId))
+        filtered = filtered.filter(chat => matchesFolder(chat, folder))
+      }
+      else {
+        filtered = []
       }
     }
   }

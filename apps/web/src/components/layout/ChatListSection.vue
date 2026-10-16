@@ -15,7 +15,7 @@ import { useRoute, useRouter } from 'vue-router'
 import EntityAvatar from '../avatar/EntityAvatar.vue'
 
 import { useChatListSelection } from '../../composables/use-chat-list-selection'
-import { filterChatsByQuery, formatChatTimestamp, getChatPreview, matchesFolder, sortChatsForFolder } from '../../utils/chat-list'
+import { filterChatsByQuery, filterFoldersByChats, formatChatTimestamp, getChatPreview, matchesFolder, sortChatsForFolder } from '../../utils/chat-list'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -50,7 +50,8 @@ const chats = computed(() => {
   const allowed = new Set(whitelist.map(String))
   return (chatStore.chats || []).filter(chat => allowed.has(String(chat.id)))
 })
-const folders = computed(() => chatStore.folders)
+/** Folder tabs (标签): only folders that contain at least one whitelist chat. */
+const folders = computed(() => filterFoldersByChats(chatStore.folders || [], chats.value || []))
 const normalizedSelectedFolderId = computed(() => {
   if (selectedFolderId.value == null) {
     return undefined
@@ -141,6 +142,18 @@ function selectFolder(folderId: number) {
   selectedGroup.value = 'folder'
   selectedFolderId.value = folderId
 }
+
+// Drop stale folder selection when whitelist no longer yields that folder tab.
+watch(folders, (list) => {
+  if (selectedGroup.value !== 'folder' || selectedFolderId.value == null) {
+    return
+  }
+  const selectedId = Number(selectedFolderId.value)
+  if (!list.some(folder => Number(folder.id) === selectedId)) {
+    selectedGroup.value = undefined
+    selectedFolderId.value = undefined
+  }
+})
 
 function handleChatClick(chatId: number) {
   if (consumeLongPressTrigger(chatId)) {

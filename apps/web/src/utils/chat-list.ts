@@ -57,6 +57,15 @@ export function matchesFolder(chat: CoreDialog, folder: CoreChatFolder) {
   return false
 }
 
+/** Keep folders that contain at least one of the given chats (e.g. whitelist-filtered). */
+export function filterFoldersByChats(folders: CoreChatFolder[], chats: CoreDialog[]) {
+  if (folders.length === 0 || chats.length === 0) {
+    return []
+  }
+
+  return folders.filter(folder => chats.some(chat => matchesFolder(chat, folder)))
+}
+
 export function sortChatsForFolder(chats: CoreDialog[], folder: CoreChatFolder) {
   const pinnedOrder = new Map((folder.pinnedChatIds ?? []).map((chatId, index) => [Number(chatId), index]))
   const isPinnedInFolder = (chat: CoreDialog) => pinnedOrder.has(Number(chat.id))
