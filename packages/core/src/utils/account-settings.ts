@@ -69,8 +69,8 @@ export function normalizeAccountSettings(settings: AccountSettings): AccountSett
 }
 
 /**
- * Empty whitelist means unrestricted (current behavior for existing accounts).
- * A non-empty list restricts live receive + Takeout sync to those chat IDs.
+ * Sync whitelist of chat IDs allowed for live receive, Takeout, and chat lists.
+ * Empty whitelist = no chats allowed (strict). Only explicitly enabled IDs pass.
  */
 export function getSyncWhitelistChatIds(settings: AccountSettings): string[] {
   return settings.messageProcessing?.whitelistChatIds ?? []
@@ -81,7 +81,7 @@ export function isChatAllowedBySyncWhitelist(settings: AccountSettings, chatId: 
     return false
   const whitelist = getSyncWhitelistChatIds(settings)
   if (whitelist.length === 0)
-    return true
+    return false
   return whitelist.includes(String(chatId))
 }
 

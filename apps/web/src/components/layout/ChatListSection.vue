@@ -4,7 +4,7 @@ import type { CoreDialog } from '@tg-search/core/types'
 import type { ComponentPublicInstance } from 'vue'
 
 import { useLogger } from '@guiiai/logg'
-import { prefillChatAvatarIntoStore, useChatStore, useSettingsStore } from '@tg-search/client'
+import { prefillChatAvatarIntoStore, useAccountStore, useChatStore, useSettingsStore } from '@tg-search/client'
 import { useMediaQuery } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
 import { VList } from 'virtua/vue'
@@ -36,11 +36,20 @@ const route = useRoute()
 const router = useRouter()
 
 const chatStore = useChatStore()
+const accountStore = useAccountStore()
 const settingsStore = useSettingsStore()
 const { selectedGroup, selectedFolderId } = storeToRefs(settingsStore)
+const { accountSettings } = storeToRefs(accountStore)
 const isCoarsePointer = useMediaQuery('(pointer: coarse)')
 
-const chats = computed(() => chatStore.chats)
+/** Sidebar / 「全部」 list: only whitelist-enabled chats (empty whitelist => empty list). */
+const chats = computed(() => {
+  const whitelist = accountSettings.value.messageProcessing?.whitelistChatIds ?? []
+  if (whitelist.length === 0)
+    return []
+  const allowed = new Set(whitelist.map(String))
+  return (chatStore.chats || []).filter(chat => allowed.has(String(chat.id)))
+})
 const folders = computed(() => chatStore.folders)
 const normalizedSelectedFolderId = computed(() => {
   if (selectedFolderId.value == null) {

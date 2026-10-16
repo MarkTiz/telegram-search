@@ -105,11 +105,11 @@ const whitelistChatIds = computed(() => {
   return accountSettings.value.messageProcessing?.whitelistChatIds ?? []
 })
 
-/** Empty whitelist = unrestricted (show all). Non-empty = only listed chats. */
+/** Empty whitelist = empty Sync list. Only enabled chats appear. */
 const syncableChats = computed(() => {
   const ids = whitelistChatIds.value
   if (ids.length === 0)
-    return chats.value
+    return []
   const allowed = new Set(ids.map(String))
   return chats.value.filter(chat => allowed.has(String(chat.id)))
 })
@@ -776,10 +776,10 @@ function startSync() {
         <!-- Chat List Area -->
         <div class="min-h-0 flex-1 p-3 md:p-4">
           <div
-            v-if="whitelistChatIds.length > 0 && syncableChats.length === 0"
+            v-if="syncableChats.length === 0"
             class="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
           >
-            {{ t('sync.whitelistNoEnabledChats') }}
+            {{ whitelistChatIds.length === 0 ? t('sync.whitelistEmptyListHint') : t('sync.whitelistNoEnabledChats') }}
           </div>
           <ChatSelector
             v-model:selected-chats="selectedChats"

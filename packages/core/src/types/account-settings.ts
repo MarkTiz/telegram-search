@@ -55,9 +55,8 @@ export const messageProcessingSchema = object({
   defaults: optional(syncOptionsSchema, { syncMedia: true, maxMediaSize: 0 }),
   enablePhotoEmbedding: optional(boolean(), false),
   /**
-   * Chat IDs allowed for live receive + Takeout sync.
-   * Empty array = no restriction (backward compatible).
-   * Once any chat is enabled, only listed chats are persisted / shown for sync.
+   * Chat IDs allowed for live receive + Takeout sync + chat lists.
+   * Empty array = no chats (strict). Only listed IDs are persisted / shown.
    */
   whitelistChatIds: optional(array(string()), []),
 })

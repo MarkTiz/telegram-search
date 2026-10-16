@@ -3,13 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { generateDefaultAccountSettings, isChatAllowedBySyncWhitelist } from '../account-settings'
 
 describe('isChatAllowedBySyncWhitelist', () => {
-  it('allows all chats when whitelist is empty', () => {
+  it('denies all chats when whitelist is empty', () => {
     const settings = generateDefaultAccountSettings()
-    expect(isChatAllowedBySyncWhitelist(settings, '123')).toBe(true)
-    expect(isChatAllowedBySyncWhitelist(settings, 456)).toBe(true)
+    expect(isChatAllowedBySyncWhitelist(settings, '123')).toBe(false)
+    expect(isChatAllowedBySyncWhitelist(settings, 456)).toBe(false)
   })
 
-  it('restricts to listed chats when whitelist is non-empty', () => {
+  it('allows only listed chats when whitelist is non-empty', () => {
     const settings = generateDefaultAccountSettings()
     settings.messageProcessing!.whitelistChatIds = ['111', '222']
     expect(isChatAllowedBySyncWhitelist(settings, '111')).toBe(true)
