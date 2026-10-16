@@ -63,7 +63,10 @@
     "agentApiAccountSelected": "{count}/{total}",
     "agentApiNoWhitelistChats": "이 계정의 동기화 화이트리스트가 비어 있습니다. 동기화 페이지에서 먼저 채팅을 활성화하세요",
     "agentApiReload": "다시 로드",
-    "agentApiSave": "저장"
+    "agentApiSave": "저장",
+    "agentApiSaving": "저장 중…",
+    "agentApiPendingSave": "저장 대기",
+    "agentApiAutoSaved": "자동 저장됨"
   },
   "base": {
     "toaster": {

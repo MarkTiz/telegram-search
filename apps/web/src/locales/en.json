@@ -63,7 +63,10 @@
     "agentApiAccountSelected": "{count}/{total}",
     "agentApiNoWhitelistChats": "This account has an empty sync whitelist — enable chats on the Sync page first",
     "agentApiReload": "Reload",
-    "agentApiSave": "Save"
+    "agentApiSave": "Save",
+    "agentApiSaving": "Saving…",
+    "agentApiPendingSave": "Unsaved changes",
+    "agentApiAutoSaved": "Auto-saved"
   },
   "base": {
     "toaster": {

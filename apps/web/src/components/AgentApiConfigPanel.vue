@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 
@@ -36,15 +36,36 @@ const enabled = ref(false)
 const accounts = ref<AgentConfigAccount[]>([])
 /** Local edits: accountId -> Set of chatIds */
 const selectedByAccount = ref<Record<string, Set<string>>>({})
+const dirty = ref(false)
+const lastSavedAt = ref<number | null>(null)
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+let saveChain: Promise<void> = Promise.resolve()
 
 const totalSelected = computed(() =>
   Object.values(selectedByAccount.value).reduce((sum, set) => sum + set.size, 0),
 )
 
+function clearSaveTimer() {
+  if (saveTimer != null) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+}
+
+function scheduleSave() {
+  dirty.value = true
+  clearSaveTimer()
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    void saveConfig({ quiet: true })
+  }, 400)
+}
+
 async function loadConfig() {
   loading.value = true
   try {
-    const res = await fetch(`/api/agent/config`, { cache: 'no-store' })
+    const res = await fetch('/api/agent/config', { cache: 'no-store' })
     if (!res.ok)
       throw new Error(`HTTP ${res.status}`)
     const data = await res.json() as AgentConfigResponse
@@ -55,6 +76,7 @@ async function loadConfig() {
       next[account.accountId] = new Set((account.agentApiChatIds ?? []).map(String))
     }
     selectedByAccount.value = next
+    dirty.value = false
   }
   catch (error) {
     toast.error(t('aiChat.agentApiLoadFailed'))
@@ -69,6 +91,11 @@ function isSelected(accountId: string, chatId: string) {
   return selectedByAccount.value[accountId]?.has(String(chatId)) ?? false
 }
 
+function onEnabledChange(checked: boolean) {
+  enabled.value = !!checked
+  scheduleSave()
+}
+
 function toggleChat(accountId: string, chatId: string, checked: boolean) {
   const set = new Set(selectedByAccount.value[accountId] ?? [])
   if (checked)
@@ -79,39 +106,68 @@ function toggleChat(accountId: string, chatId: string, checked: boolean) {
     ...selectedByAccount.value,
     [accountId]: set,
   }
+  scheduleSave()
 }
 
-async function saveConfig() {
-  saving.value = true
-  try {
-    const body = {
-      enabled: enabled.value,
-      accounts: accounts.value.map(account => ({
-        accountId: account.accountId,
-        chatIds: [...(selectedByAccount.value[account.accountId] ?? [])],
-      })),
+async function saveConfig(options?: { quiet?: boolean }) {
+  clearSaveTimer()
+  const quiet = options?.quiet === true
+
+  // Serialize saves so rapid toggles cannot race and overwrite each other.
+  const run = async () => {
+    saving.value = true
+    try {
+      const body = {
+        enabled: enabled.value,
+        accounts: accounts.value.map(account => ({
+          accountId: account.accountId,
+          chatIds: [...(selectedByAccount.value[account.accountId] ?? [])].map(String),
+        })),
+      }
+      const res = await fetch('/api/agent/config', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok)
+        throw new Error(`HTTP ${res.status}`)
+
+      // Re-load from server so UI matches persisted prune/normalize result.
+      const verify = await fetch('/api/agent/config', { cache: 'no-store' })
+      if (!verify.ok)
+        throw new Error(`HTTP ${verify.status}`)
+      const data = await verify.json() as AgentConfigResponse
+      enabled.value = !!data.enabled
+      accounts.value = data.accounts ?? []
+      const next: Record<string, Set<string>> = {}
+      for (const account of accounts.value) {
+        next[account.accountId] = new Set((account.agentApiChatIds ?? []).map(String))
+      }
+      selectedByAccount.value = next
+      dirty.value = false
+      lastSavedAt.value = Date.now()
+      if (!quiet)
+        toast.success(t('aiChat.agentApiSaved'))
     }
-    const res = await fetch(`/api/agent/config`, {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok)
-      throw new Error(`HTTP ${res.status}`)
-    toast.success(t('aiChat.agentApiSaved'))
-    await loadConfig()
+    catch (error) {
+      toast.error(t('aiChat.agentApiSaveFailed'))
+      console.error(error)
+    }
+    finally {
+      saving.value = false
+    }
   }
-  catch (error) {
-    toast.error(t('aiChat.agentApiSaveFailed'))
-    console.error(error)
-  }
-  finally {
-    saving.value = false
-  }
+
+  saveChain = saveChain.then(run, run)
+  await saveChain
 }
 
 onMounted(() => {
   loadConfig()
+})
+
+onUnmounted(() => {
+  clearSaveTimer()
 })
 </script>
 
@@ -147,13 +203,19 @@ onMounted(() => {
         <Switch
           :checked="enabled"
           :disabled="saving"
-          @update:checked="(v: boolean) => { enabled = v }"
+          @update:checked="onEnabledChange"
         />
       </div>
 
       <p class="text-xs text-muted-foreground">
         {{ t('aiChat.agentApiSelectedCount', { count: totalSelected }) }}
         <span v-if="enabled && totalSelected === 0"> — {{ t('aiChat.agentApiEmptyHint') }}</span>
+        <span v-if="dirty || saving" class="ml-2">
+          · {{ saving ? t('aiChat.agentApiSaving') : t('aiChat.agentApiPendingSave') }}
+        </span>
+        <span v-else-if="lastSavedAt" class="ml-2">
+          · {{ t('aiChat.agentApiAutoSaved') }}
+        </span>
       </p>
 
       <div
@@ -196,12 +258,14 @@ onMounted(() => {
           <li
             v-for="chat in account.chats"
             :key="`${account.accountId}:${chat.chatId}`"
-            class="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/30"
+            class="flex cursor-pointer items-center gap-3 px-4 py-2.5 hover:bg-muted/30"
+            @click="toggleChat(account.accountId, chat.chatId, !isSelected(account.accountId, chat.chatId))"
           >
             <Checkbox
               :checked="isSelected(account.accountId, chat.chatId)"
               :disabled="saving"
-              @update:checked="(v: boolean | 'indeterminate') => toggleChat(account.accountId, chat.chatId, v === true)"
+              @click.stop
+              @update:checked="(v) => toggleChat(account.accountId, chat.chatId, v === true)"
             />
             <div class="min-w-0 flex-1">
               <div class="truncate text-sm font-medium">
@@ -224,8 +288,8 @@ onMounted(() => {
           {{ t('aiChat.agentApiReload') }}
         </Button>
         <Button
-          :disabled="loading || saving"
-          @click="saveConfig"
+          :disabled="loading || saving || !dirty"
+          @click="saveConfig()"
         >
           <span v-if="saving" class="i-lucide-loader-circle mr-2 h-4 w-4 animate-spin" />
           {{ t('aiChat.agentApiSave') }}

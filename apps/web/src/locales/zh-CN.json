@@ -63,7 +63,10 @@
     "agentApiAccountSelected": "{count}/{total}",
     "agentApiNoWhitelistChats": "该账号同步白名单为空，请先在「同步」页启用会话",
     "agentApiReload": "重新加载",
-    "agentApiSave": "保存"
+    "agentApiSave": "保存",
+    "agentApiSaving": "正在保存…",
+    "agentApiPendingSave": "待保存",
+    "agentApiAutoSaved": "已自动保存"
   },
   "base": {
     "toaster": {

@@ -267,6 +267,13 @@
       "when": 1792118730744,
       "tag": "0037_telegram-auth-sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792145611147,
+      "tag": "0038_agent-api-app-settings",
+      "breakpoints": true
     }
   ]
 }

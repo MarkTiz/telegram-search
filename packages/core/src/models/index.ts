@@ -1,5 +1,6 @@
 import type { AccountJoinedChatModels } from './account-joined-chats'
 import type { AccountSettingsModels } from './account-settings'
+import type { AppSettingsModels } from './app-settings'
 import type { AccountModels } from './accounts'
 import type { BotScheduledTaskModels } from './bot-scheduled-tasks'
 import type { ChatFolderModels } from './chat-folders'
@@ -13,6 +14,7 @@ import type { UserModels } from './users'
 
 import { accountJoinedChatModels } from './account-joined-chats'
 import { accountSettingsModels } from './account-settings'
+import { appSettingsModels } from './app-settings'
 import { accountModels } from './accounts'
 import { botScheduledTaskModels } from './bot-scheduled-tasks'
 import { chatFolderModels } from './chat-folders'
@@ -34,6 +36,7 @@ export const models = {
   userModels,
   accountJoinedChatModels,
   accountSettingsModels,
+  appSettingsModels,
   accountModels,
   botScheduledTaskModels,
   telegramAuthSessionModels,
@@ -45,6 +48,7 @@ export type {
   AccountJoinedChatModels,
   AccountModels,
   AccountSettingsModels,
+  AppSettingsModels,
   BotScheduledTaskModels,
   ChatFolderModels,
   ChatMessageModels,

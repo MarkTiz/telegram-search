@@ -1,6 +1,8 @@
 /**
  * Public unauthenticated agent HTTP API (intranet).
  * Mounted at /agent → clients hit /api/agent/* via nginx.
+ *
+ * Allowlist is GLOBAL (app_settings key agentApi), not per-account settings.
  */
 
 import type { CoreDB, EmbeddingDimension, Models } from '@tg-search/core'
@@ -26,9 +28,11 @@ import {
 } from 'valibot'
 
 import {
+  chatIdsForAccount,
   collectAllowedChatIdSet,
-  findScopeForChat,
+  findEntryForChat,
   intersectAgentChatIds,
+  migrateLegacyAgentApiIfNeeded,
   resolveAgentScopes,
 } from './scope'
 
@@ -96,6 +100,15 @@ const chatNoteBodySchema = object({
 
 const configPutBodySchema = object({
   enabled: boolean(),
+  /** Global allowlist entries (cross-account). */
+  entries: optional(array(object({
+    accountId: string(),
+    chatId: string(),
+  })), []),
+  /**
+   * Backward-compatible UI payload: per-account chatIds are flattened into entries.
+   * Prefer `entries` when both are sent.
+   */
   accounts: optional(array(object({
     accountId: string(),
     chatIds: array(string()),
@@ -108,6 +121,16 @@ async function readJsonBody<T>(event: Parameters<typeof readBody>[0], schema: Pa
   return parse(schema, raw ?? {}) as T
 }
 
+function pruneEntriesToSyncWhitelist(
+  entries: Array<{ accountId: string, chatId: string }>,
+  whitelistByAccount: Map<string, Set<string>>,
+): Array<{ accountId: string, chatId: string }> {
+  return entries.filter((entry) => {
+    const whitelist = whitelistByAccount.get(entry.accountId)
+    return whitelist != null && whitelist.has(String(entry.chatId))
+  })
+}
+
 export function agentApi(db: CoreDB, models: Models): H3 {
   const app = new H3()
   const logger = useLogger('agent-api')
@@ -115,6 +138,9 @@ export function agentApi(db: CoreDB, models: Models): H3 {
   /** Config is always reachable so the UI can enable the API. */
   app.get('/config', defineEventHandler(async () => {
     try {
+      // Promote legacy per-account agentApi once if global store is empty.
+      const globalConfig = await migrateLegacyAgentApiIfNeeded(db, models)
+
       const rows = (await models.accountSettingsModels.listAllAccountsWithSettings(db))
         .expect('Failed to list accounts')
       const sessions = (await models.telegramAuthSessionModels.listStoredSessions(db))
@@ -126,11 +152,16 @@ export function agentApi(db: CoreDB, models: Models): H3 {
           displayByAccount.set(session.account_id, session.display_name)
       }
 
-      const enabled = rows.some(row => row.settings.agentApi?.enabled === true)
+      const selectedByAccount = new Map<string, Set<string>>()
+      for (const entry of globalConfig.entries) {
+        const set = selectedByAccount.get(entry.accountId) ?? new Set<string>()
+        set.add(String(entry.chatId))
+        selectedByAccount.set(entry.accountId, set)
+      }
 
       const accounts = await Promise.all(rows.map(async (row) => {
-        const syncWhitelist = row.settings.messageProcessing?.whitelistChatIds ?? []
-        const agentChatIds = row.settings.agentApi?.chatIds ?? []
+        const syncWhitelist = (row.settings.messageProcessing?.whitelistChatIds ?? []).map(String)
+        const agentChatIds = [...(selectedByAccount.get(row.id) ?? [])]
         const chatsRows = (await models.chatModels.fetchChatsByAccountId(db, row.id)).orUndefined() ?? []
         const chats = chatsRows
           .filter(chat => syncWhitelist.includes(String(chat.chat_id)))
@@ -146,13 +177,17 @@ export function agentApi(db: CoreDB, models: Models): H3 {
           platformUserId: row.platformUserId,
           displayName: displayByAccount.get(row.id)
             ?? (row.platformUserId ? `telegram:${row.platformUserId}` : row.id.slice(0, 8)),
-          syncWhitelistChatIds: syncWhitelist.map(String),
-          agentApiChatIds: agentChatIds.map(String),
+          syncWhitelistChatIds: syncWhitelist,
+          agentApiChatIds: agentChatIds,
           chats,
         }
       }))
 
-      return json({ enabled, accounts })
+      return json({
+        enabled: globalConfig.enabled === true,
+        entries: globalConfig.entries,
+        accounts,
+      })
     }
     catch (error) {
       logger.withError(error).error('Failed to get agent API config')
@@ -164,30 +199,65 @@ export function agentApi(db: CoreDB, models: Models): H3 {
     try {
       const body = await readJsonBody<{
         enabled: boolean
-        accounts: Array<{ accountId: string, chatIds: string[] }>
+        entries?: Array<{ accountId: string, chatId: string }>
+        accounts?: Array<{ accountId: string, chatIds: string[] }>
       }>(event, configPutBodySchema)
 
       const rows = (await models.accountSettingsModels.listAllAccountsWithSettings(db))
         .expect('Failed to list accounts')
-      const chatIdsByAccount = new Map(body.accounts.map(a => [a.accountId, a.chatIds.map(String)]))
 
+      const whitelistByAccount = new Map<string, Set<string>>()
       for (const row of rows) {
-        const nextChatIds = chatIdsByAccount.has(row.id)
-          ? (chatIdsByAccount.get(row.id) ?? [])
-          : (row.settings.agentApi?.chatIds ?? [])
-
-        const nextSettings = normalizeAccountSettings({
-          ...row.settings,
-          agentApi: {
-            enabled: body.enabled,
-            chatIds: nextChatIds,
-          },
-        })
-
-        await models.accountSettingsModels.updateAccountSettings(db, row.id, nextSettings)
+        whitelistByAccount.set(
+          row.id,
+          new Set((row.settings.messageProcessing?.whitelistChatIds ?? []).map(String)),
+        )
       }
 
-      return json({ ok: true, enabled: body.enabled })
+      let entries: Array<{ accountId: string, chatId: string }>
+      if (body.entries && body.entries.length > 0) {
+        entries = body.entries.map(e => ({ accountId: String(e.accountId), chatId: String(e.chatId) }))
+      }
+      else if (body.accounts) {
+        entries = []
+        for (const account of body.accounts) {
+          for (const chatId of account.chatIds) {
+            entries.push({ accountId: String(account.accountId), chatId: String(chatId) })
+          }
+        }
+      }
+      else {
+        entries = []
+      }
+
+      const pruned = pruneEntriesToSyncWhitelist(entries, whitelistByAccount)
+      const saved = (await models.appSettingsModels.setAgentApiConfig(db, {
+        enabled: body.enabled,
+        entries: pruned,
+      })).expect('Failed to save global agent API config')
+
+      // Clear divergent per-account agentApi leftovers so UI/WS settings cannot resurrect them.
+      for (const row of rows) {
+        const fresh = (await models.accountSettingsModels.fetchSettingsByAccountId(db, row.id))
+          .expect('Failed to fetch account settings')
+        if (!fresh.agentApi?.enabled && (fresh.agentApi?.chatIds?.length ?? 0) === 0)
+          continue
+        await models.accountSettingsModels.updateAccountSettings(db, row.id, normalizeAccountSettings({
+          ...fresh,
+          agentApi: { enabled: false, chatIds: [] },
+        }))
+      }
+
+      logger.withFields({
+        enabled: saved.enabled,
+        entryCount: saved.entries.length,
+      }).log('Global agent API config saved')
+
+      return json({
+        ok: true,
+        enabled: saved.enabled,
+        entries: saved.entries,
+      })
     }
     catch (error) {
       logger.withError(error).error('Failed to update agent API config')
@@ -209,21 +279,25 @@ export function agentApi(db: CoreDB, models: Models): H3 {
         accountIds?: string[]
       }>(event, searchMessagesBodySchema)
 
-      const { enabled, accounts } = await resolveAgentScopes(db, models, body.accountIds)
+      const { enabled, entries } = await resolveAgentScopes(db, models, body.accountIds)
       if (!enabled)
         return disabledResponse()
 
-      if (!body.query.trim())
+      if (!body.query.trim() || entries.length === 0)
         return json({ ok: true, resultsCount: 0, messages: [] })
 
       const allMessages: ReturnType<typeof convertToCoreRetrievalMessages> = []
+      const accountIds = [...new Set(entries.map(e => e.accountId))]
 
-      for (const scope of accounts) {
-        const chatIds = intersectAgentChatIds(scope.chatIds, body.chatIds)
+      for (const accountId of accountIds) {
+        const allowlist = chatIdsForAccount(entries, accountId)
+        const chatIds = intersectAgentChatIds(allowlist, body.chatIds)
         if (chatIds.length === 0)
           continue
 
-        const embeddingSettings = scope.settings.embedding
+        const settings = (await models.accountSettingsModels.fetchSettingsByAccountId(db, accountId))
+          .expect('Failed to fetch account settings')
+        const embeddingSettings = settings.embedding
         const embeddingDimension = embeddingSettings.dimension as EmbeddingDimension
         const filters = {
           fromUserId: body.fromUserId,
@@ -241,7 +315,7 @@ export function agentApi(db: CoreDB, models: Models): H3 {
         const rows = (await models.chatMessageModels.retrieveMessages(
           db,
           logger,
-          scope.accountId,
+          accountId,
           embeddingDimension,
           body.useVector && embedding
             ? { embedding, model: embeddingSettings.model, text: body.query }
@@ -252,12 +326,11 @@ export function agentApi(db: CoreDB, models: Models): H3 {
 
         const converted = convertToCoreRetrievalMessages(rows).map(msg => ({
           ...msg,
-          accountId: scope.accountId,
+          accountId,
         }))
         allMessages.push(...converted)
       }
 
-      // Prefer higher similarity; fall back to newer timestamps.
       allMessages.sort((a, b) => {
         const sa = a.similarity ?? 0
         const sb = b.similarity ?? 0
@@ -267,11 +340,7 @@ export function agentApi(db: CoreDB, models: Models): H3 {
       })
 
       const trimmed = allMessages.slice(0, body.limit)
-      return json({
-        ok: true,
-        resultsCount: trimmed.length,
-        messages: trimmed,
-      })
+      return json({ ok: true, resultsCount: trimmed.length, messages: trimmed })
     }
     catch (error) {
       logger.withError(error).error('searchMessages failed')
@@ -291,21 +360,18 @@ export function agentApi(db: CoreDB, models: Models): H3 {
         accountIds?: string[]
       }>(event, retrieveContextBodySchema)
 
-      const { enabled, accounts } = await resolveAgentScopes(db, models, body.accountIds)
+      const { enabled, entries } = await resolveAgentScopes(db, models, body.accountIds)
       if (!enabled)
         return disabledResponse()
 
-      const scope = findScopeForChat(accounts, body.chatId, body.accountId)
-      if (!scope)
+      const entry = findEntryForChat(entries, body.chatId, body.accountId)
+      if (!entry)
         return json({ ok: true, contextCount: 0, messages: [] })
 
       const rows = (await models.chatMessageModels.fetchMessagesByTimeRange(
         db,
-        scope.accountId,
-        {
-          start: 0,
-          end: body.targetTimestamp - 1,
-        },
+        entry.accountId,
+        { start: 0, end: body.targetTimestamp - 1 },
         [String(body.chatId)],
         { limit: body.limit, offset: 0 },
         undefined,
@@ -314,14 +380,10 @@ export function agentApi(db: CoreDB, models: Models): H3 {
 
       const messages = convertToCoreRetrievalMessages(rows as never).map(msg => ({
         ...msg,
-        accountId: scope.accountId,
+        accountId: entry.accountId,
       }))
 
-      return json({
-        ok: true,
-        contextCount: messages.length,
-        messages,
-      })
+      return json({ ok: true, contextCount: messages.length, messages })
     }
     catch (error) {
       logger.withError(error).error('retrieveContext failed')
@@ -335,9 +397,12 @@ export function agentApi(db: CoreDB, models: Models): H3 {
     try {
       const body = await readJsonBody<{ accountIds?: string[] }>(event, getDialogsBodySchema)
 
-      const { enabled, accounts } = await resolveAgentScopes(db, models, body.accountIds)
+      const { enabled, entries } = await resolveAgentScopes(db, models, body.accountIds)
       if (!enabled)
         return disabledResponse()
+
+      if (entries.length === 0)
+        return json({ ok: true, dialogsCount: 0, dialogs: [] })
 
       const dialogs: Array<{
         accountId: string
@@ -348,20 +413,22 @@ export function agentApi(db: CoreDB, models: Models): H3 {
         note?: string
       }> = []
 
-      for (const scope of accounts) {
-        if (scope.chatIds.length === 0)
-          continue
+      const byAccount = new Map<string, Set<string>>()
+      for (const entry of entries) {
+        const set = byAccount.get(entry.accountId) ?? new Set<string>()
+        set.add(entry.chatId)
+        byAccount.set(entry.accountId, set)
+      }
 
-        const allowed = new Set(scope.chatIds.map(String))
-        const chats = (await models.chatModels.fetchChatsByAccountId(db, scope.accountId))
+      for (const [accountId, allowed] of byAccount) {
+        const chats = (await models.chatModels.fetchChatsByAccountId(db, accountId))
           .expect('Failed to fetch chats')
-
         for (const chat of chats) {
           const chatId = String(chat.chat_id)
           if (!allowed.has(chatId))
             continue
           dialogs.push({
-            accountId: scope.accountId,
+            accountId,
             chatId,
             name: chat.chat_name ?? chatId,
             type: String(chat.chat_type),
@@ -391,11 +458,11 @@ export function agentApi(db: CoreDB, models: Models): H3 {
         accountIds?: string[]
       }>(event, searchPhotosBodySchema)
 
-      const { enabled, accounts } = await resolveAgentScopes(db, models, body.accountIds)
+      const { enabled, entries } = await resolveAgentScopes(db, models, body.accountIds)
       if (!enabled)
         return disabledResponse()
 
-      const allowedChatIds = collectAllowedChatIdSet(accounts)
+      const allowedChatIds = collectAllowedChatIdSet(entries)
       if (body.chatIds?.length) {
         const requested = new Set(body.chatIds.map(String))
         for (const id of [...allowedChatIds]) {
@@ -407,13 +474,13 @@ export function agentApi(db: CoreDB, models: Models): H3 {
       if (allowedChatIds.size === 0 || !body.query.trim())
         return json({ ok: true, resultsCount: 0, photos: [] })
 
-      // Use embedding settings from the first account that has an API key.
-      const embeddingAccount = accounts.find(a => a.settings.embedding?.apiKey)
-        ?? accounts[0]
-      if (!embeddingAccount)
+      const accountId = entries[0]?.accountId
+      if (!accountId)
         return json({ ok: true, resultsCount: 0, photos: [] })
 
-      const embeddingSettings = embeddingAccount.settings.embedding
+      const settings = (await models.accountSettingsModels.fetchSettingsByAccountId(db, accountId))
+        .expect('Failed to fetch account settings')
+      const embeddingSettings = settings.embedding
       const embeddingDimension = embeddingSettings.dimension as EmbeddingDimension
       const overfetch = Math.min(body.limit * 5, 100)
 
@@ -431,12 +498,10 @@ export function agentApi(db: CoreDB, models: Models): H3 {
       }
 
       let rows: PhotoRow[] = []
-
       if (body.useVector) {
         const embeddingResult = (await embedContents([body.query], embeddingSettings)).orUndefined()
-        if (!embeddingResult) {
+        if (!embeddingResult)
           return json({ ok: true, resultsCount: 0, photos: [] })
-        }
         rows = (await models.photoModels.searchPhotosByVector(
           db,
           embeddingResult.embeddings[0],
@@ -488,17 +553,17 @@ export function agentApi(db: CoreDB, models: Models): H3 {
         accountIds?: string[]
       }>(event, chatNoteBodySchema)
 
-      const { enabled, accounts } = await resolveAgentScopes(db, models, body.accountIds)
+      const { enabled, entries } = await resolveAgentScopes(db, models, body.accountIds)
       if (!enabled)
         return disabledResponse()
 
-      const scope = findScopeForChat(accounts, body.chatId, body.accountId)
-      if (!scope)
+      const entry = findEntryForChat(entries, body.chatId, body.accountId)
+      if (!entry)
         return json({ ok: true, chatId: body.chatId, note: '' })
 
       const note = await models.chatModels.getOrModifyChatNote(
         db,
-        scope.accountId,
+        entry.accountId,
         String(body.chatId),
         body.note ?? '',
         body.modify,
@@ -506,7 +571,7 @@ export function agentApi(db: CoreDB, models: Models): H3 {
 
       return json({
         ok: true,
-        accountId: scope.accountId,
+        accountId: entry.accountId,
         chatId: body.chatId,
         note: note ?? '',
       })

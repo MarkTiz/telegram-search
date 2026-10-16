@@ -1,56 +1,50 @@
-import type { AccountSettings, CoreDB, Models } from '@tg-search/core'
+import type { CoreDB, GlobalAgentApiConfig, Models } from '@tg-search/core'
 
-import { getAgentApiChatIds, isAgentApiEnabled } from '@tg-search/core'
-
-export interface AgentAccountScope {
+export interface AgentAllowEntry {
   accountId: string
-  platform: string
-  platformUserId: string
-  settings: AccountSettings
-  /** Agent API allowlist chat IDs (already pruned to sync whitelist). */
-  chatIds: string[]
+  chatId: string
 }
 
 export interface AgentScopeResolution {
-  /** True when any account has agentApi.enabled. */
   enabled: boolean
-  accounts: AgentAccountScope[]
+  /** Global allowlist entries (already filtered by optional accountIds). */
+  entries: AgentAllowEntry[]
 }
 
 /**
- * Resolve cross-account agent API scopes from DB settings.
- * When `accountIds` is provided, only those accounts are considered.
+ * Resolve global agent API scope.
+ * Optional `accountIds` further restricts which entries are active for a request.
  */
 export async function resolveAgentScopes(
   db: CoreDB,
   models: Models,
   accountIds?: string[] | null,
 ): Promise<AgentScopeResolution> {
-  const rows = (await models.accountSettingsModels.listAllAccountsWithSettings(db))
-    .expect('Failed to list accounts for agent API')
+  const config = (await models.appSettingsModels.getAgentApiConfig(db))
+    .expect('Failed to load global agent API config')
 
-  const enabled = rows.some(row => isAgentApiEnabled(row.settings))
-
-  let filtered = rows
-  if (accountIds != null && accountIds.length > 0) {
-    const wanted = new Set(accountIds.map(String))
-    filtered = rows.filter(row => wanted.has(row.id))
-  }
-
-  const accounts: AgentAccountScope[] = filtered.map(row => ({
-    accountId: row.id,
-    platform: row.platform,
-    platformUserId: row.platformUserId,
-    settings: row.settings,
-    chatIds: getAgentApiChatIds(row.settings),
+  let entries = (config.entries ?? []).map(entry => ({
+    accountId: String(entry.accountId),
+    chatId: String(entry.chatId),
   }))
 
-  return { enabled, accounts }
+  if (accountIds != null && accountIds.length > 0) {
+    const wanted = new Set(accountIds.map(String))
+    entries = entries.filter(entry => wanted.has(entry.accountId))
+  }
+
+  return {
+    enabled: config.enabled === true,
+    entries,
+  }
+}
+
+export function chatIdsForAccount(entries: AgentAllowEntry[], accountId: string): string[] {
+  return entries.filter(e => e.accountId === accountId).map(e => e.chatId)
 }
 
 /**
- * Intersect request chatIds (if any) with an account's agent allowlist.
- * Empty allowlist => empty (strict).
+ * Intersect request chatIds (if any) with allowlisted chat IDs for one account.
  */
 export function intersectAgentChatIds(
   allowlist: string[],
@@ -64,26 +58,52 @@ export function intersectAgentChatIds(
   return requestChatIds.map(String).filter(id => allowed.has(id))
 }
 
-/** Flat set of all allowed chat IDs across scopes (for photo filtering). */
-export function collectAllowedChatIdSet(scopes: AgentAccountScope[]): Set<string> {
-  const set = new Set<string>()
-  for (const scope of scopes) {
-    for (const id of scope.chatIds)
-      set.add(String(id))
-  }
-  return set
+export function collectAllowedChatIdSet(entries: AgentAllowEntry[]): Set<string> {
+  return new Set(entries.map(e => String(e.chatId)))
 }
 
-export function findScopeForChat(
-  scopes: AgentAccountScope[],
+export function findEntryForChat(
+  entries: AgentAllowEntry[],
   chatId: string,
   preferredAccountId?: string | null,
-): AgentAccountScope | undefined {
+): AgentAllowEntry | undefined {
   const id = String(chatId)
   if (preferredAccountId) {
-    const preferred = scopes.find(s => s.accountId === preferredAccountId && s.chatIds.includes(id))
+    const preferred = entries.find(e => e.accountId === preferredAccountId && e.chatId === id)
     if (preferred)
       return preferred
   }
-  return scopes.find(s => s.chatIds.includes(id))
+  return entries.find(e => e.chatId === id)
+}
+
+/** One-time merge of legacy per-account agentApi into global store when global is empty. */
+export async function migrateLegacyAgentApiIfNeeded(
+  db: CoreDB,
+  models: Models,
+): Promise<GlobalAgentApiConfig> {
+  const current = (await models.appSettingsModels.getAgentApiConfig(db))
+    .expect('Failed to load global agent API config')
+
+  if (current.entries.length > 0 || current.enabled) {
+    return current
+  }
+
+  const rows = (await models.accountSettingsModels.listAllAccountsWithSettings(db))
+    .expect('Failed to list accounts for agent API migration')
+
+  const entries: AgentAllowEntry[] = []
+  let enabled = false
+  for (const row of rows) {
+    if (row.settings.agentApi?.enabled)
+      enabled = true
+    for (const chatId of row.settings.agentApi?.chatIds ?? []) {
+      entries.push({ accountId: row.id, chatId: String(chatId) })
+    }
+  }
+
+  if (!enabled && entries.length === 0)
+    return current
+
+  return (await models.appSettingsModels.setAgentApiConfig(db, { enabled, entries }))
+    .expect('Failed to migrate legacy agent API config')
 }
