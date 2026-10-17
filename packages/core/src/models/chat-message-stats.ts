@@ -4,6 +4,7 @@ import type { DBSelectChatMessageStats } from './utils/types'
 
 import { and, count, eq, max, min, sql } from 'drizzle-orm'
 
+import { accountJoinedChatsTable } from '../schemas/account-joined-chats'
 import { chatMessagesTable } from '../schemas/chat-messages'
 import { joinedChatsTable } from '../schemas/joined-chats'
 import { withResult } from '../utils/result'
@@ -147,9 +148,59 @@ async function getChatMessageStatsByChatId(db: CoreDB, accountId: string, chatId
   })
 }
 
+
+/**
+ * Count local messages newer than each chat's last-seen cursor for an account.
+ * Chats with a null last-seen cursor are treated as caught up (omitted / unread 0).
+ */
+async function getLocalUnreadCounts(
+  db: CoreDB,
+  accountId: string,
+): PromiseResult<Array<{ chat_id: string, unread_count: number }>> {
+  return withResult(async () => {
+    const rows = await db
+      .select({
+        chat_id: joinedChatsTable.chat_id,
+        unread_count: count(chatMessagesTable.id).as('unread_count'),
+      })
+      .from(accountJoinedChatsTable)
+      .innerJoin(
+        joinedChatsTable,
+        eq(joinedChatsTable.id, accountJoinedChatsTable.joined_chat_id),
+      )
+      .innerJoin(
+        chatMessagesTable,
+        and(
+          eq(chatMessagesTable.in_chat_id, joinedChatsTable.chat_id),
+          eq(chatMessagesTable.platform, 'telegram'),
+          eq(chatMessagesTable.deleted_at, 0),
+          sql`${accountJoinedChatsTable.last_seen_platform_message_id} ~ '^[0-9]+$'`,
+          sql`${chatMessagesTable.platform_message_id} ~ '^[0-9]+$'`,
+          sql`(${chatMessagesTable.platform_message_id})::bigint > (${accountJoinedChatsTable.last_seen_platform_message_id})::bigint`,
+          sql`(
+            ${joinedChatsTable.chat_type} != 'user'
+            OR ${chatMessagesTable.owner_account_id} = ${accountId}
+            OR ${chatMessagesTable.owner_account_id} IS NULL
+          )`,
+        ),
+      )
+      .where(and(
+        eq(accountJoinedChatsTable.account_id, accountId),
+        eq(joinedChatsTable.platform, 'telegram'),
+      ))
+      .groupBy(joinedChatsTable.chat_id)
+
+    return rows.map(row => ({
+      chat_id: row.chat_id,
+      unread_count: Number(row.unread_count) || 0,
+    }))
+  })
+}
+
 export const chatMessageStatsModels = {
   getChatMessagesStats,
   getChatMessageStatsByChatId,
+  getLocalUnreadCounts,
 }
 
 export type ChatMessageStatsModels = typeof chatMessageStatsModels

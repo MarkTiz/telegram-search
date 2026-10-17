@@ -13,6 +13,8 @@ export const accountJoinedChatsTable = pgTable('account_joined_chats', {
   is_contact: boolean().notNull().default(false),
   folder_ids: integer('folder_ids').array().notNull().default([]),
   access_hash: text(),
+  // Local UI last-seen cursor (Telegram platform message id). Null => treat as caught up (unread 0).
+  last_seen_platform_message_id: text(),
   created_at: bigint({ mode: 'number' }).notNull().$defaultFn(() => Date.now()),
 }, table => [
   uniqueIndex('account_joined_chats_account_joined_chat_unique_index').on(table.account_id, table.joined_chat_id),

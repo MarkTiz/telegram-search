@@ -55,6 +55,9 @@ const clearSyncPtsOutsideWhitelist = vi.fn(async () => 0)
 const isChatAccessibleByAccount = vi.fn(async (_db: unknown, _accountId: string, _chatId: string) => Ok(true))
 const retrieveMessages = vi.fn(async (_db: unknown, _accountId: string, _dimension: unknown, _content: unknown, _pagination: unknown, _filters: unknown) => Ok([] as unknown[]))
 
+const ensureLastSeenBaselines = vi.fn(async () => Ok(0))
+const getLocalUnreadCounts = vi.fn(async () => Ok([] as Array<{ chat_id: string, unread_count: number }>))
+
 const models = {
   chatModels: {
     fetchChatsByAccountId,
@@ -63,9 +66,11 @@ const models = {
     clearSyncPtsOutsideWhitelist,
     isChatAccessibleByAccount,
     retrieveMessages,
+    ensureLastSeenBaselines,
   },
   chatMessageStatsModels: {
     getChatMessagesStats,
+    getLocalUnreadCounts,
   },
   accountSettingsModels: {
     fetchSettingsByAccountId: vi.fn(async () => Ok({
@@ -107,6 +112,7 @@ describe('storage event handlers - dialogs with accounts', () => {
         pinned: false,
         accessHash: undefined,
         lastMessageDate,
+        unreadCount: 0,
       },
     ])
   })

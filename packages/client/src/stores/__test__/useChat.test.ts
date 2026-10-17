@@ -1,5 +1,6 @@
 import { CoreEventType } from '@tg-search/core'
 import { createPinia, setActivePinia } from 'pinia'
+import { ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useChatStore } from '../useChat'
@@ -27,18 +28,10 @@ vi.mock('@vueuse/core', async (importOriginal) => {
   return {
     ...actual,
     useLocalStorage: (key: string, initialValue: any) => {
-      // Simple mock for useLocalStorage using a ref-like object
-      let val = localStorageMock.get(key) ?? initialValue
-      return {
-        // Setter to update mock map
-        set value(v: any) {
-          localStorageMock.set(key, v)
-          val = v
-        },
-        get value() {
-          return val
-        },
-      }
+      // Reactive ref so Pinia computed getters invalidate after writes.
+      if (!localStorageMock.has(key))
+        localStorageMock.set(key, ref(initialValue))
+      return localStorageMock.get(key)
     },
   }
 })
@@ -100,4 +93,34 @@ describe('useChatStore', () => {
     expect(store.folders).toHaveLength(1)
     expect(store.folders[0].title).toBe('Folder 1')
   })
+
+  it('keeps online dialogs separate from local chats', () => {
+    const store = useChatStore()
+    store.setOnlineDialogs([
+      { id: 99, name: 'Online Only', type: 'group' },
+    ] as any)
+    store.chats = [
+      { id: 1, name: 'Local Chat', type: 'group', unreadCount: 3 },
+    ] as any
+
+    expect(store.onlineDialogs).toHaveLength(1)
+    expect(store.onlineDialogs[0].id).toBe(99)
+    expect(store.chats).toHaveLength(1)
+    expect(store.chats[0].id).toBe(1)
+  })
+
+  it('markChatSeen clears local unread and emits StorageMarkChatSeen', () => {
+    const store = useChatStore()
+    store.chats = [
+      { id: 7, name: 'Chat', type: 'group', unreadCount: 5 },
+    ] as any
+
+    store.markChatSeen('7', '12345', { immediate: true })
+    expect(store.getChat('7')?.unreadCount).toBe(0)
+    expect(sendEventMock).toHaveBeenCalledWith(CoreEventType.StorageMarkChatSeen, {
+      chatId: '7',
+      platformMessageId: '12345',
+    })
+  })
+
 })

@@ -1,0 +1,1 @@
+ALTER TABLE "account_joined_chats" ADD COLUMN "last_seen_platform_message_id" text;

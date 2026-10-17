@@ -10,6 +10,7 @@ import type { DBSelectChat, DBSelectChatWithAccount } from './utils/types'
 import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 
 import { accountJoinedChatsTable } from '../schemas/account-joined-chats'
+import { chatMessagesTable } from '../schemas/chat-messages'
 import { joinedChatsTable } from '../schemas/joined-chats'
 import { withResult } from '../utils/result'
 import { parseDate } from './utils/time'
@@ -115,6 +116,7 @@ async function fetchChatsByAccountId(db: CoreDB, accountId: string): PromiseResu
       is_contact: accountJoinedChatsTable.is_contact,
       folder_ids: accountJoinedChatsTable.folder_ids,
       pts: accountJoinedChatsTable.pts,
+      last_seen_platform_message_id: accountJoinedChatsTable.last_seen_platform_message_id,
       created_at: joinedChatsTable.created_at,
       updated_at: joinedChatsTable.updated_at,
     })
@@ -182,6 +184,123 @@ async function updateChatPts(db: CoreDB, accountId: string, chatId: string, pts:
 }
 
 
+
+/**
+ * For chats with no last-seen cursor yet, seed it to the latest stored message id.
+ * Keeps historical backlog from flooding the sidebar unread badge on first load.
+ */
+async function ensureLastSeenBaselines(db: CoreDB, accountId: string): PromiseResult<number> {
+  return withResult(async () => {
+    const rows = await db
+      .select({
+        account_joined_chat_id: accountJoinedChatsTable.id,
+        chat_id: joinedChatsTable.chat_id,
+        chat_type: joinedChatsTable.chat_type,
+        last_seen_platform_message_id: accountJoinedChatsTable.last_seen_platform_message_id,
+      })
+      .from(accountJoinedChatsTable)
+      .innerJoin(
+        joinedChatsTable,
+        eq(joinedChatsTable.id, accountJoinedChatsTable.joined_chat_id),
+      )
+      .where(and(
+        eq(accountJoinedChatsTable.account_id, accountId),
+        sql`${accountJoinedChatsTable.last_seen_platform_message_id} IS NULL`,
+      ))
+
+    let updated = 0
+    for (const row of rows) {
+      const ownerScope = row.chat_type === 'user'
+        ? sql`(
+            ${chatMessagesTable.owner_account_id} = ${accountId}
+            OR ${chatMessagesTable.owner_account_id} IS NULL
+          )`
+        : sql`true`
+
+      const latest = await db
+        .select({
+          platform_message_id: sql<string | null>`max(case when ${chatMessagesTable.platform_message_id} ~ '^[0-9]+$' then ${chatMessagesTable.platform_message_id} end)`,
+        })
+        .from(chatMessagesTable)
+        .where(and(
+          eq(chatMessagesTable.in_chat_id, row.chat_id),
+          eq(chatMessagesTable.platform, 'telegram'),
+          eq(chatMessagesTable.deleted_at, 0),
+          ownerScope,
+        ))
+        .limit(1)
+
+      const latestId = latest[0]?.platform_message_id
+      if (!latestId)
+        continue
+
+      await db
+        .update(accountJoinedChatsTable)
+        .set({ last_seen_platform_message_id: String(latestId) })
+        .where(eq(accountJoinedChatsTable.id, row.account_joined_chat_id))
+      updated += 1
+    }
+
+    return updated
+  })
+}
+
+/**
+ * Advance the local UI last-seen cursor for a chat.
+ * Only moves forward (numeric Telegram message ids). Returns the stored cursor.
+ */
+async function markChatSeen(
+  db: CoreDB,
+  accountId: string,
+  chatId: string,
+  platformMessageId: string,
+): PromiseResult<string | null> {
+  return withResult(async () => {
+    const trimmed = String(platformMessageId ?? '').trim()
+    if (!trimmed || !/^[0-9]+$/.test(trimmed)) {
+      return null
+    }
+
+    const chat = await db
+      .select({ id: joinedChatsTable.id })
+      .from(joinedChatsTable)
+      .where(eq(joinedChatsTable.chat_id, chatId))
+      .limit(1)
+
+    if (chat.length === 0)
+      return null
+
+    const existing = await db
+      .select({
+        last_seen_platform_message_id: accountJoinedChatsTable.last_seen_platform_message_id,
+      })
+      .from(accountJoinedChatsTable)
+      .where(and(
+        eq(accountJoinedChatsTable.account_id, accountId),
+        eq(accountJoinedChatsTable.joined_chat_id, chat[0].id),
+      ))
+      .limit(1)
+
+    if (existing.length === 0)
+      return null
+
+    const current = existing[0].last_seen_platform_message_id
+    if (current && /^[0-9]+$/.test(current) && BigInt(trimmed) <= BigInt(current)) {
+      return current
+    }
+
+    await db
+      .update(accountJoinedChatsTable)
+      .set({ last_seen_platform_message_id: trimmed })
+      .where(and(
+        eq(accountJoinedChatsTable.account_id, accountId),
+        eq(accountJoinedChatsTable.joined_chat_id, chat[0].id),
+      ))
+
+    return trimmed
+  })
+}
+
 /**
  * Clear sync pts checkpoints for chats not in the sync whitelist.
  * Empty whitelist clears all pts for the account so catch-up never targets any chat.
@@ -228,6 +347,8 @@ export const chatModels = {
   fetchChatsByAccountId,
   isChatAccessibleByAccount,
   updateChatPts,
+  markChatSeen,
+  ensureLastSeenBaselines,
   clearSyncPtsOutsideWhitelist,
   findChatAccessHash,
   recordChatEntity,

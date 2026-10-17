@@ -4,7 +4,7 @@ import type { CoreDialog, CoreMessage } from '@tg-search/core/types'
 import { useBridge, useChatStore, useMessageStore, useSessionStore, useSettingsStore } from '@tg-search/client'
 import { CoreEventType } from '@tg-search/core'
 import { storeToRefs } from 'pinia'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -53,6 +53,39 @@ const isLoadingOlder = ref(false)
 const isLoadingNewer = ref(false)
 
 const virtualListRef = ref<InstanceType<typeof VirtualMessageList>>()
+const isViewingAtBottom = ref(true)
+
+function resolveNewestVisibleMessageId(): string | undefined {
+  const messages = sortedMessageArray.value
+  if (!messages.length)
+    return undefined
+  // Messages are chronological; newest is last when loaded as archive window.
+  let best: string | undefined
+  for (const message of messages) {
+    const messageId = String(message.platformMessageId ?? '')
+    if (!/^[0-9]+$/.test(messageId))
+      continue
+    if (!best || BigInt(messageId) > BigInt(best))
+      best = messageId
+  }
+  return best
+}
+
+function syncLocalSeenFromViewport(options: { immediate?: boolean } = {}) {
+  const chatId = id.toString()
+  chatStore.setChatViewingAtBottom(chatId, isViewingAtBottom.value)
+  if (!isViewingAtBottom.value)
+    return
+  const newestId = resolveNewestVisibleMessageId()
+  if (newestId)
+    chatStore.markChatSeen(chatId, newestId, options)
+}
+
+function handleMessageListScroll(payload: { isAtBottom: boolean }) {
+  isViewingAtBottom.value = payload.isAtBottom
+  syncLocalSeenFromViewport()
+}
+
 
 const messageInput = ref('')
 const isContextMode = ref(false)
@@ -79,6 +112,16 @@ onMounted(async () => {
   if (!isContextMode.value && sortedMessageIds.value.length === 0) {
     await loadOlderMessages()
   }
+
+  // Opening a chat while viewing the latest archive page clears local unread.
+  if (!isContextMode.value) {
+    isViewingAtBottom.value = true
+    syncLocalSeenFromViewport({ immediate: true })
+  }
+})
+
+onBeforeUnmount(() => {
+  chatStore.clearChatViewingState(id.toString())
 })
 
 // When switching accounts while staying on the same chat route, reset the
@@ -110,6 +153,8 @@ async function loadOlderMessages(): Promise<'fetched' | 'skipped'> {
 
   try {
     await fetchMessages(messageFetchLimit, 'older')
+    await nextTick()
+    syncLocalSeenFromViewport()
     return 'fetched'
   }
   finally {
@@ -135,6 +180,8 @@ async function loadNewerMessages(): Promise<'fetched' | 'skipped'> {
 
   try {
     await fetchMessages(messageFetchLimit, 'newer')
+    await nextTick()
+    syncLocalSeenFromViewport()
     return 'fetched'
   }
   finally {
@@ -147,8 +194,11 @@ async function loadNewerMessages(): Promise<'fetched' | 'skipped'> {
 // history is not enough — reset and reload the latest page first.
 async function jumpToLatest() {
   isContextMode.value = false
+  isViewingAtBottom.value = true
+  chatStore.setChatViewingAtBottom(id.toString(), true)
   messageStore.replaceMessages([], { chatId: id.toString(), limit: messageWindowSize })
   await loadOlderMessages()
+  syncLocalSeenFromViewport({ immediate: true })
 }
 
 function sendMessage() {
@@ -328,6 +378,7 @@ watch(
         :on-jump-to-latest="jumpToLatest"
         :auto-scroll-to-bottom="!isContextMode"
         :debug="debugMode"
+        @scroll="handleMessageListScroll"
       />
     </div>
 

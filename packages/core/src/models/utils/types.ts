@@ -34,6 +34,7 @@ export type DBSelectChatWithAccount = DBSelectChat & {
   access_hash: string | null
   folder_ids: number[] | null
   pts: number
+  last_seen_platform_message_id: string | null
 }
 
 export type DBInsertPhoto = typeof photosTable.$inferInsert

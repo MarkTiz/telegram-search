@@ -95,7 +95,7 @@ function applySyncOptionsToLocalState(options: SyncOptions) {
 const bridge = useBridge()
 
 const chatsStore = useChatStore()
-const { chats, folders } = storeToRefs(chatsStore)
+const { chats, folders, onlineDialogs } = storeToRefs(chatsStore)
 
 type SyncPageTab = 'sync' | 'whitelist'
 const syncPageTab = ref<SyncPageTab>('sync')
@@ -763,7 +763,7 @@ function startSync() {
       <!-- Whitelist management -->
       <div v-if="syncPageTab === 'whitelist'" class="min-h-0 flex-1 p-3 md:p-4">
         <SyncWhitelistPanel
-          :chats="chats"
+          :chats="onlineDialogs"
           :whitelist-chat-ids="whitelistChatIds"
           :saving="isWhitelistSaving"
           class="h-full"

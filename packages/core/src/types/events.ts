@@ -72,6 +72,8 @@ export enum CoreEventType {
   StorageMessageEditMarks = 'storage:message-edit-marks',
   StorageChatNote = 'storage:record:dialog-note',
   StorageChatNoteData = 'storage:dialog-note',
+  StorageMarkChatSeen = 'storage:mark:chat-seen',
+  StorageChatSeenData = 'storage:chat-seen',
 
   TakeoutRun = 'takeout:run',
   TakeoutTaskAbort = 'takeout:task:abort',
@@ -313,6 +315,9 @@ export interface StorageEventToCore {
   [CoreEventType.StorageFetchMessageEditMarks]: (data: { chatId: string, messageIds: string[], requestId?: string }) => void
 
   [CoreEventType.StorageChatNote]: (data: { chatId: string, note: string, modify: boolean }) => void
+
+  /** Advance local last-seen cursor; unread = local messages newer than this id. */
+  [CoreEventType.StorageMarkChatSeen]: (data: { chatId: string, platformMessageId: string }) => void
 }
 
 export interface StorageEventFromCore {
@@ -324,6 +329,8 @@ export interface StorageEventFromCore {
   [CoreEventType.StorageMessageEditMarks]: (data: { chatId: string, editedMessageIds: string[], requestId?: string }) => void
 
   [CoreEventType.StorageChatNoteData]: (data: { chatId: string, note: string }) => void
+
+  [CoreEventType.StorageChatSeenData]: (data: { chatId: string, platformMessageId: string, unreadCount: number }) => void
 }
 
 export interface CoreMessageSearchParams {

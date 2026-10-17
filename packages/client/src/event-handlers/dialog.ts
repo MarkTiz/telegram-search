@@ -17,7 +17,7 @@ export function registerDialogEventHandlers(
 ) {
   const logger = useLogger('avatars')
 
-  // Base dialog list
+  // Telegram online dialog list (whitelist pickers). Main sidebar uses StorageDialogs.
   registerEventHandler(CoreEventType.DialogData, (data) => {
     const chatStore = useChatStore()
     if (data.pinnedDialogIds?.length) {
@@ -27,7 +27,7 @@ export function registerDialogEventHandlers(
       chatStore.syncPinnedOrder(data.dialogs.filter(chat => chat.pinned).map(chat => Number(chat.id)).reverse())
     }
 
-    chatStore.mergeDialogs(data.dialogs)
+    chatStore.setOnlineDialogs(data.dialogs)
   })
 
   // Chat folders

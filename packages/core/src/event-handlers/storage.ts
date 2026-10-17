@@ -10,6 +10,56 @@ import { CoreEventType } from '../types/events'
 import { getSyncWhitelistChatIds } from '../utils/account-settings'
 import { embedContents } from '../utils/embed'
 
+
+function mapDbChatsToCoreDialogs(
+  dbChats: Array<{
+    chat_id: string
+    chat_name: string
+    chat_type: CoreDialog['type']
+    is_contact?: boolean | null
+    last_message_from_name?: string | null
+    last_message?: string | null
+    dialog_date?: number | null
+    is_pinned?: boolean | null
+    folder_ids?: number[] | null
+    access_hash?: string | null
+    last_seen_platform_message_id?: string | null
+  }>,
+  chatsMessageStats: Array<{ chat_id: string, message_count?: number | null }>,
+  unreadByChatId: Map<string, number>,
+): CoreDialog[] {
+  return dbChats.map((chat) => {
+    const chatMessageStats = chatsMessageStats.find(stats => stats.chat_id === chat.chat_id)
+    return {
+      id: Number(chat.chat_id),
+      name: chat.chat_name,
+      type: chat.chat_type,
+      isContact: chat.is_contact ?? undefined,
+      messageCount: chatMessageStats?.message_count ?? undefined,
+      lastMessageFromName: chat.last_message_from_name ?? undefined,
+      lastMessage: chat.last_message ?? undefined,
+      lastMessageDate: chat.dialog_date ? new Date(chat.dialog_date) : undefined,
+      pinned: !!chat.is_pinned,
+      folderIds: chat.folder_ids ?? [],
+      accessHash: chat.access_hash ?? undefined,
+      unreadCount: unreadByChatId.get(String(chat.chat_id)) ?? 0,
+    } satisfies CoreDialog
+  })
+}
+
+async function loadLocalDialogsForAccount(
+  ctx: CoreContext,
+  dbModels: Models,
+  accountId: string,
+): Promise<CoreDialog[]> {
+  await dbModels.chatModels.ensureLastSeenBaselines(ctx.getDB(), accountId)
+  const dbChats = (await dbModels.chatModels.fetchChatsByAccountId(ctx.getDB(), accountId))?.unwrap() ?? []
+  const chatsMessageStats = (await dbModels.chatMessageStatsModels.getChatMessagesStats(ctx.getDB(), accountId))?.unwrap() ?? []
+  const unreadRows = (await dbModels.chatMessageStatsModels.getLocalUnreadCounts(ctx.getDB(), accountId))?.unwrap() ?? []
+  const unreadByChatId = new Map(unreadRows.map(row => [String(row.chat_id), row.unread_count]))
+  return mapDbChatsToCoreDialogs(dbChats, chatsMessageStats, unreadByChatId)
+}
+
 export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, dbModels: Models) {
   logger = logger.withContext('core:storage:event')
 
@@ -50,29 +100,9 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
     logger.verbose('Fetching dialogs')
 
     const accountId = data?.accountId || ctx.getCurrentAccountId()
+    const dialogs = await loadLocalDialogsForAccount(ctx, dbModels, accountId)
 
-    const dbChats = (await dbModels.chatModels.fetchChatsByAccountId(ctx.getDB(), accountId))?.unwrap()
-    const chatsMessageStats = (await dbModels.chatMessageStatsModels.getChatMessagesStats(ctx.getDB(), accountId))?.unwrap()
-
-    logger.withFields({ count: dbChats.length, chatsMessageStatsCount: chatsMessageStats.length }).verbose('Fetched dialogs for account')
-
-    const dialogs = dbChats.map((chat) => {
-      const chatMessageStats = chatsMessageStats.find(stats => stats.chat_id === chat.chat_id)
-      return {
-        id: Number(chat.chat_id),
-        name: chat.chat_name,
-        type: chat.chat_type,
-        isContact: chat.is_contact ?? undefined,
-        messageCount: chatMessageStats?.message_count,
-        lastMessageFromName: chat.last_message_from_name ?? undefined,
-        lastMessage: chat.last_message ?? undefined,
-        lastMessageDate: chat.dialog_date ? new Date(chat.dialog_date) : undefined,
-        pinned: !!chat.is_pinned,
-        folderIds: chat.folder_ids ?? [],
-        accessHash: chat.access_hash ?? undefined,
-      } satisfies CoreDialog
-    })
-
+    logger.withFields({ count: dialogs.length }).verbose('Fetched dialogs for account')
     ctx.emitter.emit(CoreEventType.StorageDialogs, { dialogs })
   })
 
@@ -103,6 +133,9 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
     const result = await dbModels.chatModels.recordChats(ctx.getDB(), dialogsToRecord, accountId)
     const cleared = await dbModels.chatModels.clearSyncPtsOutsideWhitelist(ctx.getDB(), accountId, whitelist)
     logger.withFields({ count: result.length, clearedPts: cleared, whitelistSize: whitelist.length }).verbose('Successfully recorded dialogs')
+
+    const dialogsForClient = await loadLocalDialogsForAccount(ctx, dbModels, accountId)
+    ctx.emitter.emit(CoreEventType.StorageDialogs, { dialogs: dialogsForClient })
   })
 
   ctx.emitter.on(CoreEventType.StorageRecordChatFolders, async ({ folders, accountId }) => {
@@ -118,26 +151,7 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
     await dbModels.chatFolderModels.upsertFolders(db, accountId, folders)
     logger.verbose('Successfully stored folder metadata')
 
-    const dbChats = (await dbModels.chatModels.fetchChatsByAccountId(db, accountId)).unwrap()
-    const chatsMessageStats = (await dbModels.chatMessageStatsModels.getChatMessagesStats(db, accountId)).unwrap()
-
-    const dialogs = dbChats.map((chat) => {
-      const chatMessageStats = chatsMessageStats.find(stats => stats.chat_id === chat.chat_id)
-      return {
-        id: Number(chat.chat_id),
-        name: chat.chat_name,
-        type: chat.chat_type,
-        isContact: chat.is_contact ?? undefined,
-        messageCount: chatMessageStats?.message_count,
-        lastMessageFromName: chat.last_message_from_name ?? undefined,
-        lastMessage: chat.last_message ?? undefined,
-        lastMessageDate: chat.dialog_date ? new Date(chat.dialog_date) : undefined,
-        pinned: !!chat.is_pinned,
-        folderIds: chat.folder_ids ?? [],
-        accessHash: chat.access_hash ?? undefined,
-      } satisfies CoreDialog
-    })
-
+    const dialogs = await loadLocalDialogsForAccount(ctx, dbModels, accountId)
     ctx.emitter.emit(CoreEventType.StorageDialogs, { dialogs })
   })
 
@@ -386,4 +400,23 @@ export function registerStorageEventHandlers(ctx: CoreContext, logger: Logger, d
       ctx.emitter.emit(CoreEventType.StorageChatNoteData, { chatId, note: '' })
     }
   })
+
+  ctx.emitter.on(CoreEventType.StorageMarkChatSeen, async ({ chatId, platformMessageId }) => {
+    logger.withFields({ chatId, platformMessageId }).verbose('Marking chat seen (local unread cursor)')
+
+    const accountId = ctx.getCurrentAccountId()
+    const hasAccess = (await dbModels.chatModels.isChatAccessibleByAccount(ctx.getDB(), accountId, chatId)).expect('Failed to check chat access')
+    if (!hasAccess) {
+      ctx.withError('Unauthorized chat access', 'Account does not have access to mark chat seen')
+      return
+    }
+
+    const stored = (await dbModels.chatModels.markChatSeen(ctx.getDB(), accountId, chatId, platformMessageId)).unwrap()
+    ctx.emitter.emit(CoreEventType.StorageChatSeenData, {
+      chatId,
+      platformMessageId: stored ?? platformMessageId,
+      unreadCount: 0,
+    })
+  })
 }
+

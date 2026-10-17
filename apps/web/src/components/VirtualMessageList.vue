@@ -394,6 +394,7 @@ defineExpose({
     }
   },
   scrollToMessage,
+  isAtBottom,
 })
 </script>
 

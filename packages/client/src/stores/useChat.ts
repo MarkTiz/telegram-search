@@ -6,7 +6,7 @@ import { useLogger } from '@guiiai/logg'
 import { CoreEventType } from '@tg-search/core'
 import { useLocalStorage } from '@vueuse/core'
 import { acceptHMRUpdate, defineStore } from 'pinia'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import { useBridge } from '../composables/useBridge'
 import { readVersionedScopedCache, writeVersionedScopedCache } from '../utils/versioned-local-cache'
@@ -19,9 +19,14 @@ export const useChatStore = defineStore('chat', () => {
   const sessionStore = useSessionStore()
   const bridge = useBridge()
   const allChats = useLocalStorage<VersionedScopedStorage<CoreDialog[]>>('v3/chat/chats', {})
+  const allOnlineDialogs = useLocalStorage<VersionedScopedStorage<CoreDialog[]>>('v3/chat/online-dialogs', {})
   const allFolders = useLocalStorage<VersionedScopedStorage<CoreChatFolder[]>>('v3/chat/folders', {})
   const allPinnedOrders = useLocalStorage<VersionedScopedStorage<number[]>>('v3/chat/pinned-order', {})
   const logger = useLogger('ChatStore')
+
+  /** Whether the open chat view is scrolled to the newest messages (for real-time local unread). */
+  const viewingAtBottomByChatId = ref<Record<string, boolean>>({})
+  const pendingMarkSeenTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   const cacheOptions = {
     maxScopes: MAX_CACHED_CHAT_SCOPES,
@@ -82,6 +87,23 @@ export const useChatStore = defineStore('chat', () => {
     },
   })
 
+  /** Full Telegram online dialog list for whitelist pickers (not the main sidebar). */
+  const onlineDialogs = computed({
+    get: () => {
+      const userId = sessionStore.activeSession?.me?.id
+      if (!userId)
+        return []
+      return readVersionedScopedCache(allOnlineDialogs.value, String(userId), [], cacheOptions).filter(chat => chat?.id != null)
+    },
+    set: (v) => {
+      const userId = sessionStore.activeSession?.me?.id
+      if (!userId)
+        return
+
+      allOnlineDialogs.value = writeVersionedScopedCache(allOnlineDialogs.value, String(userId), v, cacheOptions)
+    },
+  })
+
   const folders = computed({
     get: () => {
       const userId = sessionStore.activeSession?.me?.id
@@ -123,17 +145,29 @@ export const useChatStore = defineStore('chat', () => {
         return incomingChat
       }
 
+      const incomingTime = incomingChat.lastMessageDate ? new Date(incomingChat.lastMessageDate).getTime() : 0
+      const existingTime = existingChat.lastMessageDate ? new Date(existingChat.lastMessageDate).getTime() : 0
+      const keepNewerPreview = existingTime > incomingTime
+
       const shouldReuseSenderName = !incomingChat.lastMessageFromName
         && !!existingChat.lastMessageFromName
         && isSamePreviewSnapshot(existingChat, incomingChat)
 
       return {
         ...incomingChat,
+        // Prefer fresher local preview (live MessageData) over stale DB snapshot.
+        ...(keepNewerPreview
+          ? {
+              lastMessage: existingChat.lastMessage,
+              lastMessageFromName: existingChat.lastMessageFromName,
+              lastMessageDate: existingChat.lastMessageDate,
+            }
+          : {}),
         // Telegram-sourced dialog lists carry no messageCount; keep the DB-derived one
         ...(incomingChat.messageCount == null && existingChat.messageCount != null
           ? { messageCount: existingChat.messageCount }
           : {}),
-        ...(shouldReuseSenderName ? { lastMessageFromName: existingChat.lastMessageFromName } : {}),
+        ...(shouldReuseSenderName && !keepNewerPreview ? { lastMessageFromName: existingChat.lastMessageFromName } : {}),
         ...(options.preserveUnreadCount && existingChat.unreadCount != null
           ? { unreadCount: existingChat.unreadCount }
           : {}),
@@ -141,8 +175,77 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function setOnlineDialogs(dialogs: CoreDialog[]) {
+    onlineDialogs.value = dialogs
+  }
+
   function syncPinnedOrder(pinnedDialogIds: number[]) {
     pinnedOrder.value = pinnedDialogIds.map(id => Number(id)).filter(Number.isFinite)
+  }
+
+  function setChatViewingAtBottom(chatId: string, atBottom: boolean) {
+    viewingAtBottomByChatId.value = {
+      ...viewingAtBottomByChatId.value,
+      [String(chatId)]: atBottom,
+    }
+  }
+
+  function isViewingChatAtBottom(chatId: string) {
+    return viewingAtBottomByChatId.value[String(chatId)] === true
+  }
+
+  function clearChatViewingState(chatId: string) {
+    const key = String(chatId)
+    if (!(key in viewingAtBottomByChatId.value))
+      return
+    const next = { ...viewingAtBottomByChatId.value }
+    delete next[key]
+    viewingAtBottomByChatId.value = next
+  }
+
+  function applyLocalUnread(chatId: string | number, unreadCount: number) {
+    const id = Number(chatId)
+    const nextChats = [...chats.value]
+    const idx = nextChats.findIndex(chat => Number(chat.id) === id)
+    if (idx < 0)
+      return
+    if ((nextChats[idx].unreadCount ?? 0) === unreadCount)
+      return
+    nextChats[idx] = { ...nextChats[idx], unreadCount }
+    chats.value = nextChats
+  }
+
+  /**
+   * Persist last-seen and clear local unread for a chat.
+   * Debounced so scroll/realtime catch-up does not spam the server.
+   */
+  function markChatSeen(chatId: string, platformMessageId?: string | number | null, options: { immediate?: boolean } = {}) {
+    const id = String(chatId)
+    const messageId = platformMessageId != null ? String(platformMessageId).trim() : ''
+    if (!messageId || !/^[0-9]+$/.test(messageId)) {
+      return
+    }
+
+    applyLocalUnread(id, 0)
+
+    const send = () => {
+      pendingMarkSeenTimers.delete(id)
+      bridge.sendEvent(CoreEventType.StorageMarkChatSeen, {
+        chatId: id,
+        platformMessageId: messageId,
+      })
+    }
+
+    const existing = pendingMarkSeenTimers.get(id)
+    if (existing)
+      clearTimeout(existing)
+
+    if (options.immediate) {
+      send()
+      return
+    }
+
+    pendingMarkSeenTimers.set(id, setTimeout(send, 250))
   }
 
   function getMessagePreview(message: CoreMessage) {
@@ -190,6 +293,7 @@ export const useChatStore = defineStore('chat', () => {
 
     const nextChats = [...chats.value]
     let hasChanges = false
+    const seenTargets = new Map<string, string>()
 
     for (const message of messages) {
       const chatId = Number(message.chatId)
@@ -206,7 +310,30 @@ export const useChatStore = defineStore('chat', () => {
       const messageDate = new Date(message.platformTimestamp * 1000)
       const currentDate = chat.lastMessageDate ? new Date(chat.lastMessageDate) : undefined
 
+      const isActiveChat = options.activeChatId === message.chatId
+      const viewingLatest = isActiveChat && isViewingChatAtBottom(message.chatId)
+      const shouldClearUnread = viewingLatest
+      const shouldIncrement = !shouldClearUnread
+        && !!options.incrementUnread
+        && options.currentUserId !== message.fromId
+
+      if (shouldClearUnread && message.platformMessageId) {
+        const prev = seenTargets.get(message.chatId)
+        if (!prev || BigInt(message.platformMessageId) > BigInt(prev)) {
+          seenTargets.set(message.chatId, String(message.platformMessageId))
+        }
+      }
+
       if (currentDate && currentDate.getTime() > messageDate.getTime()) {
+        if (shouldClearUnread || shouldIncrement) {
+          nextChats[chatIndex] = {
+            ...chat,
+            unreadCount: shouldClearUnread
+              ? 0
+              : (chat.unreadCount ?? 0) + 1,
+          }
+          hasChanges = true
+        }
         continue
       }
 
@@ -215,9 +342,9 @@ export const useChatStore = defineStore('chat', () => {
         lastMessageFromName: message.fromName,
         lastMessage: getMessagePreview(message),
         lastMessageDate: messageDate,
-        unreadCount: options.activeChatId === message.chatId
+        unreadCount: shouldClearUnread
           ? 0
-          : options.incrementUnread && options.currentUserId !== message.fromId
+          : shouldIncrement
             ? (chat.unreadCount ?? 0) + 1
             : chat.unreadCount,
       }
@@ -227,26 +354,36 @@ export const useChatStore = defineStore('chat', () => {
     if (hasChanges) {
       chats.value = nextChats
     }
+
+    for (const [chatId, platformMessageId] of seenTargets) {
+      markChatSeen(chatId, platformMessageId)
+    }
   }
 
   function fetchStorageDialogs() {
     bridge.sendEvent(CoreEventType.StorageFetchDialogs)
   }
 
-  function fetchDialogs() {
+  /** Refresh Telegram online dialogs for whitelist UIs only — does not drive the main sidebar. */
+  function fetchOnlineDialogs() {
     void bridge.application.listChats({ limit: 1000 }).then((result) => {
       if (!result.ok) {
         throw new Error(`${result.error.code}: ${result.error.message}`)
       }
-      mergeDialogs(result.data.items.map(chat => ({
+      setOnlineDialogs(result.data.items.map(chat => ({
         id: Number(chat.id),
         name: chat.name,
         type: chat.type,
         username: chat.username,
         lastMessage: chat.lastMessage,
         lastMessageDate: chat.lastMessageAt ? new Date(chat.lastMessageAt * 1000) : undefined,
-      })), { preserveUnreadCount: true })
-    }).catch(error => logger.withError(error).error('Failed to fetch dialogs through Eventa'))
+      })))
+    }).catch(error => logger.withError(error).error('Failed to fetch online dialogs through Eventa'))
+  }
+
+  /** @deprecated Use fetchOnlineDialogs for whitelist; main list uses fetchStorageDialogs. */
+  function fetchDialogs() {
+    fetchOnlineDialogs()
   }
 
   function fetchFolders() {
@@ -255,10 +392,10 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function init() {
-    logger.log('Init dialogs')
+    logger.log('Init dialogs (local sidebar + online whitelist)')
 
     fetchStorageDialogs()
-    fetchDialogs()
+    fetchOnlineDialogs()
     fetchFolders()
   }
 
@@ -266,12 +403,20 @@ export const useChatStore = defineStore('chat', () => {
     init,
     getChat,
     mergeDialogs,
+    setOnlineDialogs,
     syncPinnedOrder,
     fetchDialogs,
+    fetchOnlineDialogs,
     fetchStorageDialogs,
     fetchFolders,
     updateChatPreviewFromMessages,
+    markChatSeen,
+    setChatViewingAtBottom,
+    isViewingChatAtBottom,
+    clearChatViewingState,
+    applyLocalUnread,
     chats,
+    onlineDialogs,
     folders,
   }
 })

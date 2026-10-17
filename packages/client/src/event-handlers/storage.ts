@@ -15,7 +15,8 @@ export function registerStorageEventHandlers(
 ) {
   registerEventHandler(CoreEventType.StorageDialogs, (data) => {
     const chatStore = useChatStore()
-    chatStore.mergeDialogs(data.dialogs, { preserveUnreadCount: true })
+    // Local unreadCount comes from DB last-seen cursor — do not preserve Telegram unread.
+    chatStore.mergeDialogs(data.dialogs)
     // Prefill avatars from persistent cache concurrently for better initial UX
     Promise.resolve().then(async () => {
       try {
@@ -33,4 +34,8 @@ export function registerStorageEventHandlers(
   registerEventHandler(CoreEventType.StorageMessageEditMarks, (_) => {})
   registerEventHandler(CoreEventType.StorageChatNoteData, (_) => {})
   registerEventHandler(CoreEventType.StorageSearchPhotosData, (_) => {})
+
+  registerEventHandler(CoreEventType.StorageChatSeenData, (data) => {
+    useChatStore().applyLocalUnread(data.chatId, data.unreadCount ?? 0)
+  })
 }
