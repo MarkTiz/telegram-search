@@ -400,7 +400,9 @@
     "summary": "요약",
     "sources": "출처",
     "noSources": "메시지 없음",
-    "userWithId": "사용자 {id}"
+    "userWithId": "사용자 {id}",
+    "generateSummary": "요약 생성",
+    "selectScopeHint": "범위를 선택한 뒤 「요약 생성」을 클릭하세요"
   },
   "virtualMessageList": {
     "scrolling": "불러오는 중...",

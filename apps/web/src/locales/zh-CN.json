@@ -400,7 +400,9 @@
     "summary": "摘要",
     "sources": "来源",
     "noSources": "没有来源",
-    "userWithId": "用户 {id}"
+    "userWithId": "用户 {id}",
+    "generateSummary": "生成摘要",
+    "selectScopeHint": "选择范围后点击「生成摘要」"
   },
   "virtualMessageList": {
     "scrolling": "加载中",

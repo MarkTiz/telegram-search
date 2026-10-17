@@ -400,7 +400,9 @@
     "summary": "Summary",
     "sources": "Sources",
     "noSources": "No messages",
-    "userWithId": "User {id}"
+    "userWithId": "User {id}",
+    "generateSummary": "Generate Summary",
+    "selectScopeHint": "Select a scope, then click Generate Summary"
   },
   "virtualMessageList": {
     "scrolling": "Loading...",

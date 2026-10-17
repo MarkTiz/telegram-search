@@ -45,20 +45,20 @@ const session = computed(() => summarizeStore.getSession(props.chatId))
 
 async function open() {
   isOpen.value = true
+  // Do not auto-generate; user picks a scope then clicks generate.
+}
 
-  // If we already have a summary, don't auto-fetch unless empty
-  if (session.value.content || session.value.sourceMessages.length > 0)
+function selectMode(mode: SummaryMode) {
+  if (session.value.isLoading)
     return
-
-  await triggerGenerate('unread', true)
-}
-
-async function triggerGenerate(mode: SummaryMode, autoFallbackWhenNoUnread = false) {
   activeMode.value = mode
-  await fetchSummaryAndGenerate(mode, autoFallbackWhenNoUnread)
 }
 
-async function fetchSummaryAndGenerate(mode: SummaryMode, autoFallbackWhenNoUnread = false) {
+async function triggerGenerate() {
+  await fetchSummaryAndGenerate(activeMode.value)
+}
+
+async function fetchSummaryAndGenerate(mode: SummaryMode) {
   summarizeStore.setLoading(props.chatId, true)
   summarizeStore.setSummary(props.chatId, '', [], { mode: 'none' })
   summarizeStore.setSourceMessages(props.chatId, [], { mode: 'none' })
@@ -74,12 +74,6 @@ async function fetchSummaryAndGenerate(mode: SummaryMode, autoFallbackWhenNoUnre
     summarizeStore.setSourceMessages(props.chatId, data.messages, { mode: data.mode })
 
     if (data.messages.length === 0) {
-      if (autoFallbackWhenNoUnread && mode === 'unread') {
-        toast.info(t('summaryDialog.autoFallbackToLast24h'))
-        await triggerGenerate('last24h', false)
-        return
-      }
-
       toast.info(t('summaryDialog.noMessagesToSummarize'))
       summarizeStore.setLoading(props.chatId, false)
       summarizeStore.setSummary(props.chatId, t('summaryDialog.noMessagesToSummarizeDescription'), [], { mode: 'none' })
@@ -160,12 +154,6 @@ async function generateSummary(
   }
 }
 
-async function markRead() {
-  bridge.sendEvent(CoreEventType.MessageRead, { chatId: props.chatId })
-  toast.success(t('summaryDialog.messagesMarkedRead'))
-  isOpen.value = false
-}
-
 function goToMessage(msg: CoreMessage) {
   isOpen.value = false
   router.push({
@@ -178,16 +166,6 @@ function formatTime(timestamp: number) {
   return useDateFormat(timestamp * 1000, 'HH:mm').value
 }
 
-const canMarkRead = computed(() => {
-  if (session.value.isLoading)
-    return false
-  if (!session.value.content)
-    return false
-  // Only unread-summary should allow marking unread as read.
-  if (session.value.mode !== 'unread')
-    return false
-  return true
-})
 </script>
 
 <template>
@@ -203,13 +181,13 @@ const canMarkRead = computed(() => {
       </DialogHeader>
 
       <div class="flex flex-1 flex-col gap-4 overflow-hidden p-6">
-        <!-- Mode Tabs -->
+        <!-- Mode Tabs (select only; generate via footer button) -->
         <div class="flex items-center gap-2">
           <Button
             :disabled="session.isLoading"
             :variant="activeMode === 'unread' ? 'default' : 'ghost'"
             size="sm"
-            @click="triggerGenerate('unread')"
+            @click="selectMode('unread')"
           >
             <span class="i-lucide-mail-open mr-2 h-4 w-4" />
             <span>{{ t('summaryDialog.tabUnread') }}</span>
@@ -218,7 +196,7 @@ const canMarkRead = computed(() => {
             :disabled="session.isLoading"
             :variant="activeMode === 'today' ? 'default' : 'ghost'"
             size="sm"
-            @click="triggerGenerate('today')"
+            @click="selectMode('today')"
           >
             <span class="i-lucide-calendar-days mr-2 h-4 w-4" />
             <span>{{ t('summaryDialog.tabToday') }}</span>
@@ -227,7 +205,7 @@ const canMarkRead = computed(() => {
             :disabled="session.isLoading"
             :variant="activeMode === 'last24h' ? 'default' : 'ghost'"
             size="sm"
-            @click="triggerGenerate('last24h')"
+            @click="selectMode('last24h')"
           >
             <span class="i-lucide-clock-3 mr-2 h-4 w-4" />
             <span>{{ t('summaryDialog.tabLast24h') }}</span>
@@ -245,6 +223,12 @@ const canMarkRead = computed(() => {
               <div class="h-4 w-3/4 rounded bg-muted" />
               <div class="h-4 w-1/2 rounded bg-muted" />
               <div class="h-4 w-5/6 rounded bg-muted" />
+            </div>
+            <div
+              v-else-if="!session.content"
+              class="flex flex-1 items-center justify-center px-4 text-center text-sm text-muted-foreground"
+            >
+              {{ t('summaryDialog.selectScopeHint') }}
             </div>
             <div v-else class="max-w-none overflow-y-auto pr-2">
               <MarkdownRender
@@ -291,11 +275,11 @@ const canMarkRead = computed(() => {
           {{ t('summaryDialog.close') }}
         </Button>
         <Button
-          :disabled="!canMarkRead"
-          @click="markRead"
+          :disabled="session.isLoading"
+          @click="triggerGenerate"
         >
-          <span class="i-lucide-check mr-2 h-4 w-4" />
-          {{ t('summaryDialog.markAsRead', { count: session.sourceMessages.length }) }}
+          <span class="i-lucide-sparkles mr-2 h-4 w-4" />
+          {{ t('summaryDialog.generateSummary') }}
         </Button>
       </DialogFooter>
     </DialogContent>
