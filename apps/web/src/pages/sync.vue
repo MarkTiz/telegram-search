@@ -775,12 +775,6 @@ function startSync() {
       <div v-else class="min-w-0 flex flex-1 flex-col">
         <!-- Chat List Area -->
         <div class="min-h-0 flex-1 p-3 md:p-4">
-          <div
-            v-if="syncableChats.length === 0"
-            class="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
-          >
-            {{ whitelistChatIds.length === 0 ? t('sync.whitelistEmptyListHint') : t('sync.whitelistNoEnabledChats') }}
-          </div>
           <ChatSelector
             v-model:selected-chats="selectedChats"
             v-model:visible-chat-ids="visibleChatIds"

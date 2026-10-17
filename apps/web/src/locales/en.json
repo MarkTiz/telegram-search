@@ -375,11 +375,9 @@
     "whitelistTab": "Whitelist",
     "whitelistDescription": "Only enabled chats receive live messages and appear in Sync and All chat lists. When none are enabled, lists are empty and nothing is persisted.",
     "whitelistEmptyHint": "No chats enabled — Sync/All lists are empty",
-    "whitelistEmptyListHint": "No whitelist chats enabled yet. Open the Whitelist tab and enable chats to sync.",
     "whitelistEnabledCount": "{count} chats enabled",
     "whitelistSearchPlaceholder": "Search by name or ID",
     "whitelistNoChats": "No chats to show",
-    "whitelistNoEnabledChats": "Enabled whitelist chats are unavailable (left?). Re-enable them in Whitelist.",
     "whitelistSaved": "Whitelist saved",
     "whitelistSaveFailed": "Failed to save whitelist"
   },
